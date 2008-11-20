@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+#Copyright 2007 Sebastian Hagen
+# This file is part of liasis.
+#
+# liasis is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# liasis is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import os
+import sys
+import time
+import cPickle
+import logging
+import optparse
+import socket
+import logging.handlers
+import signal
+
+from gonium import fd_management
+from gonium.fd_management import EventDispatcherPoll as EventDispatcher
+from gonium import daemon_init
+
+from liasis.benc_structures import BTMetaInfo
+from liasis import bt_client
+from liasis.bt_client import BTorrentHandler, PieceMask, EABTClient
+from liasis import bandwith_management
+from liasis import bt_management
+from liasis import bt_semipermanent_stats # need for btc unpickling
+from liasis.bt_semipermanent_stats import BTStatsTracker
+from liasis.config_str_parsing import socket_args_parse
+from liasis.config_structures import BTCConfig, DaemonConfig, BTMConfig
+from liasis.pickling import FileNamePickler
+
+
+def configuration_parse(configfile):
+   daemon_config = DaemonConfig()
+   btm_config = BTMConfig()
+   btc_config = BTCConfig()
+   
+   config_namespace = {}
+   for name in ('daemon_config', 'btm_config', 'btc_config'):
+      config_namespace[name] = locals()[name]
+   
+   exec configfile in config_namespace
+   return config_namespace
+
+
+if (__name__ == '__main__'):
+   if (os.getuid == 0):
+      print 'Liasis will not run as root; it just causes problems.'
+      sys.exit()
+      os.abort()
+   
+   logger = logging.getLogger()
+   log = logger.log
+   formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+   
+   # we probably don't want to log all the timer crud here...there's rather
+   # a lot of it on torrent startups of big torrents
+   timer_logger = logging.getLogger('gonium.fd_management.Timer')
+   timer_logger.setLevel(21)
+   
+   
+   op = optparse.OptionParser(usage='%prog [options] <config_file>')
+   op.add_option('--forcenoresume', action="store_false", dest="resume", default=True, help='Do not unpickle BTClient instance saved earlier')
+   op.add_option('-t', '--profile', action="store_true", dest='profile', default=False, help='use hotshot to profile liasis')
+   op.add_option('--nodaemon', action='store_false', dest='daemon', default=True, help='do not daemonize')
+   
+   (options, args) = op.parse_args()
+   
+   config_filename = args[0]
+   config_file = file(config_filename,'r')
+   config_data = configuration_parse(config_file)
+   config_file.close()
+   
+   daemon_config = config_data['daemon_config']
+   btm_config = config_data['btm_config']
+   btc_config = config_data['btc_config']
+   
+   if not (options.daemon):
+      handler_stderr = logging.StreamHandler()
+      handler_stderr.setLevel(30)
+      handler_stderr.setFormatter(formatter)
+      logger.addHandler(handler_stderr)
+
+   log(50, 'Liasis daemon starting.')
+   
+   if (options.resume):
+      btc = cPickle.load(file(daemon_config.pickle_filename, 'r+'))
+   else:
+      btc = EABTClient()
+   
+   pickler = FileNamePickler(daemon_config.pickle_filename)
+   
+   event_dispatcher = EventDispatcher()
+   
+   btc.connections_start(event_dispatcher, btc_config)
+   btc.pickling_shedule(pickler)
+   
+   signal.signal(signal.SIGTERM, event_dispatcher.shutdown_start_signal)
+   signal.signal(signal.SIGINT, event_dispatcher.shutdown_start_signal)
+   
+   # bt management stuff
+   if (btm_config.control_socket_af == socket.AF_UNIX):
+      # Clean up any old sockets
+      try:
+         os.unlink(btm_config.control_socket_bindargs[0])
+      except OSError:
+         pass
+
+   btm = bt_management.StreamSockBTManager(event_dispatcher,
+      address_family=btm_config.control_socket_af,
+      bindargs=btm_config.control_socket_bindargs, bt_clients=(btc,))
+   
+   if (options.daemon):
+      daemon_init.warnings_redirect_logging()
+      daemon_init.daemon_init()
+   
+   if (options.profile):
+      import hotshot
+      profile_dump_filename = 'liasis_%f.prof' % (time.time(),)
+      log(20, 'Starting profile mode. Profile is being saved to %r.' % (profile_dump_filename,))
+      profiler = hotshot.Profile(profile_dump_filename, lineevents=1)
+      profiler.runcall(event_dispatcher.event_loop)
+      profiler.close()
+   else:
+      event_dispatcher.event_loop()
+
+

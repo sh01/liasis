@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+#Copyright 2007 Sebastian Hagen
+# This file is part of liasis.
+#
+# liasis is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# liasis is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import logging
+import socket
+import optparse
+
+from liasis.client_qt import ClientMain
+
+
+if (__name__ == '__main__'):
+   logger = logging.getLogger()
+   log = logger.log
+   logger.setLevel(0)
+   formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+   handler_stderr = logging.StreamHandler()
+   handler_stderr.setLevel(30)
+   handler_stderr.setFormatter(formatter)
+   logger.addHandler(handler_stderr)
+   
+   op = optparse.OptionParser()
+   op.add_option('-c', '--ci', dest="client_idx", default=0, type="int", metavar='ID', help="Index of client to send status-changing cmds to")
+   op.add_option('-u', '--unixsock', dest="us_path", default="liasis_ctl.sock", metavar='PATH', help="Path to unix domain socket to use")
+   
+   (options, args) = op.parse_args()
+
+   ClientMain.run_standalone(socket.AF_UNIX, options.us_path)
+

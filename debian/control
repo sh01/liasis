@@ -1,0 +1,38 @@
+Source: liasis
+Section: net
+Priority: optional
+Maintainer: Sebastian Hagen <sebastian_hagen@memespace.net>
+Standards-Version: 3.6.2
+Build-Depends: debhelper
+XS-Python-Version: 2.4, 2.5
+
+Package: liasis
+Architecture: all
+Depends: python (>= 2.4), python-crypto, gonium (>= 0.5.3)
+Suggests: python-qt4
+XB-Python-Version: ${python:Versions}
+Description: liasis P2P bittorrent client
+ Liasis is a bittorrent client written entirely in python. The primary design
+ goals are correctness, stability, scalability, maintainability and
+ extensibility.
+ .
+ Liasis features a client-server architecture, being split into a daemon which
+ acts as a bittorrent peer, and several clients used to monitor and change the
+ daemon's status. Communication between the two components is possible over
+ either unix sockets or TCP connections.
+ The communication protocol itself is language-agnostic, and either side can be
+ implemented with moderate effort in any language with support for the relevant
+ socket types.
+ .
+ Liasis supports keeping state between executions (obviating the need for full
+ reconfigurations and time-consuming rehashing), the BT Fast Extensions,
+ BT connection encryption, and of course managing several torrents at the same
+ time.
+ .
+ The liasis BT protocol implementation has been written from scratch based on
+ publicly available descriptions of the BT protocol. Liasis is not derived from
+ the official bittorrent client, and does not contain any code from that
+ project.
+ .
+ Liasis is currently in an early stage of development, and is neither
+ feature-complete nor particularly user-friendly or fully documented.

@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+# based on http://www.debian.org/doc/maint-guide/ch-dreq.en.html
+
+SITEDIR = debian/tmp/$(shell pycentral pycentraldir liasis)/liasis
+BINDIR = debian/tmp/usr/bin/
+
+.PHONY: clean binary-indep binary-arch build install
+
+build:
+
+clean:
+	rm -rf debian/tmp
+
+install: src/*
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs
+	mkdir -p ${SITEDIR}/client_qt
+	cp -a src/liasis/*py ${SITEDIR}
+	cp -a src/liasis/client_qt/*py ${SITEDIR}/client_qt/
+
+	mkdir -p ${BINDIR}
+	cp -a src/tools/* ${BINDIR}
+
+binary: binary-arch binary-indep
+
+binary-arch:
+
+binary-indep: install
+	dh_testdir
+	dh_testroot
+	dh_fixperms
+	dh_pycentral
+	dh_installdeb
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb

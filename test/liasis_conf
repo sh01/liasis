@@ -1,0 +1,54 @@
+#!/usr/bin/env liasis_daemon
+
+import socket
+
+# global liasis daemon config
+daemon_config.pickle_filename = 'liasis_state.pickle'
+
+# BTManager config
+btm_config.control_socket_af = socket.AF_UNIX
+btm_config.control_socket_bindargs = ('liasis_ctl.sock',)
+
+# BTClient config
+btc_config.port = 10000
+btc_config.host = ''
+btc_config.pickle_interval = 100
+btc_config.backlog = 10
+btc_config.bwm_cycle_length = 1
+btc_config.bwm_cycle_length = 1000
+btc_config.data_basepath = 'data'
+
+
+# logger config
+def logger_setup():
+   import logging
+   logger = logging.getLogger()
+   log = logger.log
+
+   logger.setLevel(10)
+   formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+   handler_file_1 = logging.handlers.RotatingFileHandler('log/debug', maxBytes=1024**2, backupCount=5)
+   handler_file_1.setFormatter(formatter)
+   handler_file_2 = logging.handlers.RotatingFileHandler('log/l14', maxBytes=1024**2, backupCount=5)
+   handler_file_2.setFormatter(formatter)
+   handler_file_2.setLevel(14)
+   handler_file_3 = logging.handlers.RotatingFileHandler('log/l20', maxBytes=1024**2, backupCount=5)
+   handler_file_3.setFormatter(formatter)
+   handler_file_3.setLevel(20)
+   handler_file_4 = logging.handlers.RotatingFileHandler('log/l12', maxBytes=1024**2, backupCount=5)
+   handler_file_4.setFormatter(formatter)
+   handler_file_4.setLevel(12)
+   handler_file_5 = logging.handlers.RotatingFileHandler('log/l30', maxBytes=1024**2, backupCount=5)
+   handler_file_5.setFormatter(formatter)
+   handler_file_5.setLevel(30)
+   #logger.addHandler(handler_file_1)
+   #logger.addHandler(handler_file_2)
+   #logger.addHandler(handler_file_3)
+   #logger.addHandler(handler_file_4)
+   logger.addHandler(handler_file_5)
+   logging.getLogger('fd_management.FDWrap').setLevel(21)
+   logging.getLogger('BTClientConnection.l1').setLevel(21)
+   logging.getLogger('BTControlConnection').setLevel(11)
+
+logger_setup()
+

@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+#Copyright 2007 Sebastian Hagen
+# This file is part of liasis.
+#
+# liasis is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# liasis is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import sys
+import optparse
+import urllib
+import urllib2
+import gzip
+import cStringIO
+
+from liasis.benc_structures import BTMetaInfo, py_from_benc_str
+
+if (__name__ == '__main__'):
+   op = optparse.OptionParser()
+   op.add_option('-t', '--tier', dest='tier', type='long', default=0, help='tier from which to use tracker')
+   op.add_option('-i', '--index', dest='index', type='long', default=0, help='index of tracker to use inside tier')
+   op.add_option('-f', '--full', dest='info_hash_send', action='store_false', default=True, help="do not send 'info_hash' parameter to tracker; retrieve information for all tracked torrents")
+
+   (options, args) = op.parse_args()
+   
+   tf_name = args[0]
+   mi = BTMetaInfo.build_from_benc_stream(file(tf_name), announce_urls_shuffle=False)
+   info_hash = mi.info_hash
+   for i in xrange(len(mi.announce_urls)):
+      print 'Trackers in tier %d: %s' % (i, ' '.join([repr(url) for url in mi.announce_urls[i]]))
+   
+   tracker_url = mi.announce_urls[options.tier][options.index]
+   print 'using tracker_url %r...' % (tracker_url,)
+   
+   tracker_url_split = tracker_url.split('/')
+   
+   if not (tracker_url_split[-1].startswith('announce')):
+      sys.exit()
+   
+   tracker_url_split[-1] = 'scrape' + tracker_url_split[-1][8:]
+
+   tracker_url_scrape = '/'.join(tracker_url_split)
+   
+   if (options.info_hash_send):
+      tracker_url_scrape += '?info_hash=%s' % (urllib.quote(info_hash),)
+   
+   print 'scrape url: %r' % (tracker_url_scrape,)
+   print 'Fetching and parsing...'
+   scrape_urlo = urllib2.urlopen(tracker_url_scrape)
+   scrape_str = scrape_urlo.read()
+   if ('Content-Encoding' in scrape_urlo.headers):
+      content_encoding = scrape_urlo.headers['Content-Encoding']
+      print 'Content-Encoding is %r.' % (content_encoding,)
+      if (content_encoding == 'gzip'):
+         print 'Ungzipping data.'
+         scrape_str = gzip.GzipFile(fileobj=cStringIO.StringIO(scrape_str)).read()
+   
+   scrape_data = py_from_benc_str(scrape_str)
+
+   file_data = scrape_data['files']
+   
+   
+   print 'Fetched scrape data for %d files.' % (len(file_data),)
+   
+   torrent_data = file_data[info_hash]
+   print 'Data specific to torrent %r:' % (info_hash,)
+   
+   print torrent_data
+

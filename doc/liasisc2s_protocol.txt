@@ -1,0 +1,330 @@
+--- Intro ---
+This file describes the liasis client-to-server protocol version 0.1.
+
+--- purpose ---
+Liasis is a BT client system separated in backend and frontend software. The
+liasis backend is a daemon process that acts as a bittorrent client, exchanging
+data with other BT clients in a p2p fashion.
+A liasis frontend is a piece of software that displays the status of a liasis
+backend instance and optionally changes its behaviour.
+The protocol used for communication between a liasis backend and a liasis
+frontend is called the liasis client-to-server protocol, and described in this
+document.
+
+--- basic concepts and limitations ---
+A Liasisc2s stream consists of a sequence of messages. Each message consists of
+a length prefix specifying the length of the data part, a sequence number and a
+data part of a length from 0 to 2**32-1 bytes.
+The basic layout is:
+|data_len|seq_num|data|
+data_len:
+   A 32bit unsigned integer in network byte order, specifying the
+   length of the data segment in bytes.
+seq_num:
+   A 32bit unsigned integer in network byte order, specifying the
+   new current sequence number when sent by a Liasisc2s server or echoing
+   the last sequence number processed when sent by a Liasisc2s client.
+data:
+   Arbitrary binary data to be interpreted by higher protocol layers; see below
+
+--- sequence numbers ---
+Liasisc2s servers may use sequence numbers in an arbitrary fashion. For
+simplicity, a scheme of monotonly increasing sequence numbers that overflow
+at 2**32 is suggested.
+
+Liasisc2s clients MUST, for each message they sent on a Liasisc2s stream,
+use the sequence number from the last message from their server they have
+processed, or 0 if no such message has been processed yet.
+
+This is a simple scheme to avoid race conditions on a protocol level, should
+the Liasisc2s server state change in a way that would modify the semantics
+of a client message received.
+
+Liasisc2s SHOULD perform sanity checks on sequence numbers. Commands from a
+client using an old sequence number SHOULD be rejected if the semantics of the
+relevant command have been changed by changes in the Liasisc2s server's state
+that happened after the sequence number was last used by the server.
+Details for such problems will be detailed in the 'race condition risk' fields,
+below.
+
+Liasisc2s clients MUST gracefully cope with sequence number related error
+messages from the server, and MAY try to automatically recover by determining
+what changed in the Liasisc2s server's state and appropriately modifying the
+rejected message for resending.
+Alternatively, the failure MAY be passed directly to the user; such issues
+should be relatively rare in practice.
+
+--- message data ---
+Messages with a data_len of 0 are NOOPs, and must be accepted by both Liasisc2s
+servers and clients.
+Any longer messages MUST be valid 'bencoded' structures, as specified in the
+offical bittorrent protocol specification.
+The outermost bencoded structure MUST be a list. This list MUST contain at
+least one element, and its first element MUST be a string. This element is from
+here on called the 'message type', and specifies the meaning of the remaining
+data, if any.
+
+--- C2S message types ---
+Msgtype: BUILDBTHFROMMETAINFO
+Arguments:
+   1.: int, client index
+   2.: string, bencoded metainfo data
+   3.: int, (boolean) initial activity of newly instanciated BTH
+RC Risk: client count
+Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Meaning:
+Requests that the liasis server build a new BTH from the specified BTH and
+activity status and add it to the specified BTC.
+
+
+Msgtype: DROPBTH
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+RC Risk: client count, bth set, bth activeness
+Reply: RCREJ || COMMANDOK
+Requests that the liasis server drops the BTH with the specifid info-hash from
+the list of managed BTHs managed by the specified BTC. This will provoke an
+ARGERROR if the specified BTC does not manage a BTH with the specified
+info-hash, or that BTH is not inactive.
+Otherwise, the BTH will be archived and dropped.
+
+
+Msgtype: FORCEBTCREANNOUNCE
+Arguments:
+   1.: int, client index
+RC risk: client count
+Reply: RCREJ || COMMANDOK
+Meaning:
+Requests that the server force all active BTHs associated with the specified
+BTC to reannounce to their respective tracker.
+If the server accepts this command, all affected BTC instances MUST immediately
+send a regular ANNOUNCE update to their tracker, ignoring any stored
+'interval' and 'min interval' values.
+As such, this command should not be used excessively. It's primarily intended
+to allow necessary tracker updates immediately after the global IP of a host
+running a liasis server changes.
+
+
+Msgtype: GETBTHDATA
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+RC risk: client count
+Reply: RCREJ || BTHDATA
+Meaning:
+Requests a BTHDATA report from the server.
+
+
+Msgtype: GETBTHTHROUGHPUT
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+   3.: int, maximum history length
+RC risk: client count
+Reply: RCREJ || BTHTHROUGHPUT
+Meaning:
+Request a dump of the throughput history of the specified BTH instance.
+
+
+Msgtype: GETCLIENTCOUNT
+Arguments: none
+RC risk: none
+Reply: CLIENTCOUNT
+Meaning:
+Requests a CLIENTCOUNT report from the server.
+
+
+Msgtype: GETCLIENTDATA
+Arguments:
+   1.: int, client index
+RC risk: client count
+Reply: RCREJ || CLIENTDATA
+Meaning:
+Requests a dump of all interesting data about the BT Client instance specified
+by index.
+
+
+Msgtype: GETCLIENTTORRENTS
+Arguments:
+   1.: int, client index
+RC risk: client count
+Reply: RCREJ || CLIENTTORRENTS
+Meaning:
+Request a dump of the info-hashes of any torrents the specified client is
+managing.
+
+
+Msgtype: STARTBTH
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+RC risk: client count
+Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Meaning: Requests that the server start the specified bth instance.
+
+
+Msgtype: STOPBTH
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+RC risk: client count
+Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Meaning: Requests that the server stop the specified bth instance.
+
+
+Msgtype: SUBSCRIBEBTHTHROUGHPUT
+Arguments:
+   1.: int, client index
+RC risk: client count
+Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Meaning:
+Request updates of the throughput history of all BTHs of the the specified
+BTC to be sent whenever this data changes.
+
+
+Msgtype: UNSUBSCRIBEBTHTHROUGHPUT
+Arguments:
+   1.: int, client index
+RC risk: client count
+Reply: RCREH || COMMANDOK || COMMANDNOOP
+Meaning:
+Request an existing BTH throughput subscription to be cancelled.
+
+
+--- S2C message types ---
+Msgtype: ARGERROR
+Arguments:
+   1.: list, original request line
+   2.: string, human-readable error description
+Meaning:
+Asserts that the specified request has not been processed because the arguments
+where not in the format expected by the server
+
+
+Msgtype: BTHDATA
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+   3.: arbitrary, BTH data
+Meaning:
+Dumps all interesting data about the specified torrent handler.
+
+
+Msgtype: BTHTHROUGHPUT
+Arguments:
+   1.: int, client index
+   2.: string, torrent info-hash
+   3.: int, cycle length of download traffic slices in milliseconds
+   4.: list of ints; download throughput list
+   5.: int, cycle length of upload traffic slices in milliseconds
+   6.: list of ints; upload throughput list
+Meaning:
+Dumps (limited) bandwith history of specified BTH.
+
+
+Msgtype: BTHTHROUGHPUTSLICE
+Arguments:
+   1.: int, client index
+   3.: list of ints: download traffic during last slice for each client
+   4.: list of ints: upload traffic during last slice for each client
+Meaning:
+Traffic-slice update sent as result of a subscription.
+
+
+Msgtype: CLIENTCOUNT
+Arguments:
+   1.: int, number of clients
+RC risk: none
+Meaning:
+Specifies how many 'BT client' instances the liasis backend is currently
+managing. This MUST, and MUST only be send on reception of an accepted
+GETCLIENTCOUNT message.
+
+
+Msgtype: CLIENTDATA
+Arguments:
+   1.: int, client index
+   2.: arbitrary, client data structure
+Meaning:
+Specifies all interesting data about the BT Client instance the client
+requested data about. This MUST only be sent in response to a GETCLIENTDATA
+request.
+
+
+Msgtype: CLIENTTORRENTS
+Arguments:
+   1.: int, client index
+   2.: list of strings, one for each info-hash of torrent managed by specified
+       client
+RC risk: client count
+Meaning:
+Specifies which torrents the specified BT client instance is currently
+managing.
+
+
+Msgtype: COMMANDOK
+Arguments: arbitrary; have to mirror ACKed command line exactly
+RC risk: none
+Meaning:
+Asserts that the specified command line has been executed successfully.
+
+
+Msgtype: COMMANDNOOP
+Arguments: arbitrary; have to mirror ACKed command line exactly
+RC risk: none
+Meaning:
+Asserts that the specified command line has not resulted in any change in the
+liasis server's state, because any execution of it would have been a NO-OP.
+A client receiving a message of this type MAY treat it like a COMMANDOK message
+with identical arguments.
+
+
+Msgtype: INVALIDCLIENTCOUNT
+Arguments: none
+RC risk: none
+Meaning:
+Asserts that the BT client count has changed on server side; any previous BT
+Client indexes may therefore not be valid anymore.
+
+
+Msgtype: INVALIDCLIENTTORRENTS
+Arguments:
+   1.: int, client index
+RC risk: none
+Meaning:
+Asserts that the set of torrents managed by the specified BT client has changed
+on server side.
+
+
+Msgtype: RCREJ
+Arguments: arbitrarily many; must exactly mirror request message
+RC risk: none
+Meaning:
+Asserts that the specified request has been rejected because of relevant server
+state changes since the last message the client has processed.
+
+
+Msgtype: BENCERROR
+Arguments:
+   1.: string, original message data
+Meaning:
+Asserts that the server could not benc-decode the specified message data block.
+
+
+Msgtype: UNKNOWNCMD
+Arguments: arbitrarily many; must exactly mirror request message
+RC risk: none
+Meaning:
+Asserts that the specified request has not been processed because the server
+did not understand the specified cmd.
+
+
+Msgtype: UNSUBSCRIBE
+Arguments:
+   1.: int, client index
+RC risk: none
+Meaning:
+Asserts that the specified subscription has been cancelled without an
+unsubscription having been requested on this connection, i.e. as a side-effect
+of a server state change.
