@@ -275,7 +275,7 @@ class ThroughputCounter:
    logger = logging.getLogger('ThroughputCountingBTCC')
    log = logger.log
    def __init__(self, history_length=16384, *args, **kwargs):
-      self.history_length = 16384
+      self.history_length = history_length
       self.em_throughput_block.EventListener(self.throughput_block_log)
       self.em_throughput_slice.EventListener(self.throughput_slice_log)
       self.em_utd_change_true.EventListener(self.throughput_history_sync)
