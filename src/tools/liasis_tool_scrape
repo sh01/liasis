@@ -17,10 +17,9 @@
 
 import sys
 import optparse
-import urllib
-import urllib2
+import urllib.request
 import gzip
-import cStringIO
+from io import BytesIO
 
 from liasis.benc_structures import BTMetaInfo, py_from_benc_str
 
@@ -33,46 +32,46 @@ if (__name__ == '__main__'):
    (options, args) = op.parse_args()
    
    tf_name = args[0]
-   mi = BTMetaInfo.build_from_benc_stream(file(tf_name), announce_urls_shuffle=False)
+   mi = BTMetaInfo.build_from_benc_stream(open(tf_name,'rb'), announce_urls_shuffle=False)
    info_hash = mi.info_hash
-   for i in xrange(len(mi.announce_urls)):
-      print 'Trackers in tier %d: %s' % (i, ' '.join([repr(url) for url in mi.announce_urls[i]]))
+   for i in range(len(mi.announce_urls)):
+      print('Trackers in tier {0}: {1}'.format(i, ' '.join([ascii(url) for url in mi.announce_urls[i]])))
    
    tracker_url = mi.announce_urls[options.tier][options.index]
-   print 'using tracker_url %r...' % (tracker_url,)
+   print('using tracker_url {0!a}...'.format(tracker_url))
    
-   tracker_url_split = tracker_url.split('/')
+   tracker_url_split = tracker_url.split(b'/')
    
-   if not (tracker_url_split[-1].startswith('announce')):
+   if not (tracker_url_split[-1].startswith(b'announce')):
       sys.exit()
    
-   tracker_url_split[-1] = 'scrape' + tracker_url_split[-1][8:]
+   tracker_url_split[-1] = b'scrape' + tracker_url_split[-1][8:]
 
-   tracker_url_scrape = '/'.join(tracker_url_split)
+   tracker_url_scrape = b'/'.join(tracker_url_split)
    
    if (options.info_hash_send):
-      tracker_url_scrape += '?info_hash=%s' % (urllib.quote(info_hash),)
+      tracker_url_scrape += b'?info_hash=' + urllib.request.quote(info_hash).encode('ascii')
    
-   print 'scrape url: %r' % (tracker_url_scrape,)
-   print 'Fetching and parsing...'
-   scrape_urlo = urllib2.urlopen(tracker_url_scrape)
+   print('scrape url: {0!a}'.format(tracker_url_scrape))
+   print(b'Fetching and parsing...')
+   scrape_urlo = urllib.request.urlopen(tracker_url_scrape.decode('ascii'))
    scrape_str = scrape_urlo.read()
    if ('Content-Encoding' in scrape_urlo.headers):
       content_encoding = scrape_urlo.headers['Content-Encoding']
-      print 'Content-Encoding is %r.' % (content_encoding,)
+      print('Content-Encoding is {0!a}.'.format(content_encoding))
       if (content_encoding == 'gzip'):
-         print 'Ungzipping data.'
-         scrape_str = gzip.GzipFile(fileobj=cStringIO.StringIO(scrape_str)).read()
+         print('Ungzipping data.')
+         scrape_str = gzip.GzipFile(fileobj=BytesIO(scrape_str)).read()
    
    scrape_data = py_from_benc_str(scrape_str)
 
-   file_data = scrape_data['files']
+   file_data = scrape_data[b'files']
    
    
-   print 'Fetched scrape data for %d files.' % (len(file_data),)
+   print('Fetched scrape data for {0} files.'.format(len(file_data)))
    
    torrent_data = file_data[info_hash]
-   print 'Data specific to torrent %r:' % (info_hash,)
+   print('Data specific to torrent {0!a}:'.format(info_hash))
    
-   print torrent_data
+   print(torrent_data)
 

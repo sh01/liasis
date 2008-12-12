@@ -25,26 +25,26 @@ class HTTPLikeURL:
    
    @classmethod
    def build_from_urlstring(cls, urlstring):
-      (proto, text) = urlstring.split('://', 1)
-      text_split = text.split('/',1)
+      (proto, text) = urlstring.split(b'://', 1)
+      text_split = text.split(b'/',1)
       hostport = text_split[0]
       if (len(text_split) == 1):
-         path = ''
+         path = b''
       else:
          path = text_split[1]
       
-      if (hostport.startswith('[') and (hostport.count('[') ==  hostport.count(']') == 1)):
+      if (hostport.startswith(b'[') and (hostport.count(b'[') ==  hostport.count(b']') == 1)):
          # direct ipv6 address specification
-         (host, text) = hostport.split(']')
+         (host, text) = hostport.split(b']')
          host = host[1:]
-         if (text != ''):
-            if not (text.startswith(':')):
-               raise ValueError('Invalid url %r; expected port in data after ipv6 address in host field.' % (urlstring,))
+         if (text):
+            if not (text.startswith(b':')):
+               raise ValueError('Invalid url {0!a}; expected port in data after ipv6 address in host field.'.format(urlstring,))
             port = int(text[1:],10)
          else:
             port = None
       else:
-         text_split = hostport.split(':',1)
+         text_split = hostport.split(b':',1)
          host = text_split[0]
          if (len(text_split) == 1):
             port = None
@@ -54,5 +54,5 @@ class HTTPLikeURL:
       return cls(proto, host, port, path)
    
    def __repr__(self):
-      return '%s(**%s)' % (self.__class__.__name__, self.__dict__)
+      return '{0}(**{1})'.format(self.__class__.__name__, self.__dict__)
 
