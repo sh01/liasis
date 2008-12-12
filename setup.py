@@ -17,8 +17,8 @@
 import sys
 from distutils.core import setup
 
-#if (sys.version_info[0] <= 2):
-#   raise Exception('This liasis version needs a python >= 3.0')
+if (sys.version_info[0] <= 2):
+   raise Exception('This liasis version needs a python >= 3.0')
 
 
 setup(name='liasis',
