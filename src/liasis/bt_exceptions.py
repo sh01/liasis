@@ -18,5 +18,5 @@
 # General BT exceptions. Moved into separate module to avoid problematic
 # import cycles
 
-class BTClientError(StandardError):
+class BTClientError(Exception):
    pass
