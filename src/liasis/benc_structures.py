@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -172,7 +172,8 @@ class BTPeer:
       elif (isinstance(seq, list) or isinstance(seq, tuple)):
          rv = tuple([cls.build_from_dict(dict) for dict in seq])
       else:
-         raise TypeError('Unable to process argument %r of type %r; expected string or list/tuple.' % (seq, type(seq)))
+         raise TypeError('Unable to process argument {0!a} of type {1};'
+            'expected string or list/tuple.'.format(seq, type(seq)))
 
       return rv
    
@@ -276,7 +277,7 @@ class BTMetaInfo:
       return cls.build_from_dict(py_from_benc_str(string), *args, **kwargs)
    
    def __repr__(self):
-      return '{0}({1})'.format(self.__class__.__name__, ', '.join(['%s=%r' % (field, getattr(self,field)) for field in self.fields]))
+      return '{0}({1})'.format(self.__class__.__name__, ', '.join(('{0}={1!a}'.format(field, getattr(self,field)) for field in self.fields)))
 
    def hr_format_lines(self):
       rv = []
@@ -376,7 +377,7 @@ class BTTargetFile:
          self.file = None
    
    def __repr__(self):
-      return '%s%s' % (self.__class__.__name__, (self.path, self.length, self.md5sum))
+      return '{0}{1}'.format(self.__class__.__name__, (self.path, self.length, self.md5sum))
    
 
 if (__name__ == '__main__'):
