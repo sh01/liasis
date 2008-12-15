@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -18,16 +18,15 @@
 import logging
 import time
 
-from gonium import fd_management
-from gonium.fd_management import SockStreamBinary
+from gonium.fdm import AsyncDataStream
 from gonium.event_multiplexing import EventMultiplexer
 
-from liasis.bandwith_management import RingBuffer
+from .liasis.bandwith_management import RingBuffer
 
-from benc_structures import BTMetaInfo
-from cc_base import BTControlConnectionBase, BTControlConnectionError, \
+from .benc_structures import BTMetaInfo
+from .cc_base import BTControlConnectionBase, BTControlConnectionError, \
 BTCCStateError
-from bt_client_mirror import SIHLBTClientMirror, BTorrentHandlerMirror
+from .bt_client_mirror import SIHLBTClientMirror, BTorrentHandlerMirror
 
 
 class Universe:
@@ -79,29 +78,29 @@ class BTControlConnectionClient(BTControlConnectionBase):
 
    def data_update(self):
       """Sync model of peer's state to peer"""
-      self.msg_send('GETCLIENTCOUNT', [])
+      self.msg_send(b'GETCLIENTCOUNT', [])
    
    def bth_start(self, client_idx, info_hash):
       """Start specified BTH"""
-      self.msg_send('STARTBTH', [int(client_idx), str(info_hash)])
+      self.msg_send(b'STARTBTH', [int(client_idx), bytes(info_hash)])
    
    def bth_stop(self, client_idx, info_hash):
       """Stop specified BTH"""
-      self.msg_send('STOPBTH', [int(client_idx), str(info_hash)])
+      self.msg_send(b'STOPBTH', [int(client_idx), bytes(info_hash)])
    
    def bth_drop(self, client_idx, info_hash):
       """Drop specified BTH from list of BTHs managed by specified BTC"""
-      self.msg_send('DROPBTH', [int(client_idx), str(info_hash)])
+      self.msg_send(b'DROPBTH', [int(client_idx), bytes(info_hash)])
    
    def btc_reannounce_force(self, client_idx):
       """Force active BTHs of specified BTC to reannounce to their trackers"""
-      self.msg_send('FORCEBTCREANNOUNCE', [int(client_idx)])
+      self.msg_send(b'FORCEBTCREANNOUNCE', [int(client_idx)])
    
    def bth_add_from_metainfo(self, client_idx, mi_str, active):
       """Add new BTH built from provided MI string to specified BTC"""
       # sanity check
       mi = BTMetaInfo.build_from_benc_string(mi_str)
-      self.msg_send('BUILDBTHFROMMETAINFO', [int(client_idx), mi_str, int(active)])
+      self.msg_send(b'BUILDBTHFROMMETAINFO', [int(client_idx), mi_str, int(active)])
    
    def rcr_presence_check(self, rc_risk, seq_num):
       """Save specified seq_num and return False"""
@@ -123,7 +122,7 @@ class BTControlConnectionClient(BTControlConnectionBase):
 #------------------------------------------------------------------------------ network input handlers
    def input_process_PROTOERROR(self, cmd, args):
       """Process protocol error message"""
-      raise BTControlConnectionError('%r got %s line: %r' % (self, cmd, [cmd,] + list(args)))
+      raise BTControlConnectionError('{0!a} got {1} line: {2!a}'.format(self, cmd, [cmd,] + list(args)))
 
    def input_process_BTHDATA(self, cmd, args):
       """Process BTHDATA message"""
@@ -161,7 +160,7 @@ class BTControlConnectionClient(BTControlConnectionBase):
       self.cc = int(args[0])
       self.bt_clients = [None]*self.cc
       for i in range(self.cc):
-         self.msg_send('GETCLIENTDATA', [i,])
+         self.msg_send(b'GETCLIENTDATA', [i,])
    
    def input_process_CLIENTDATA(self, cmd, args):
       """Process CLIENTDATA message"""
@@ -185,7 +184,7 @@ class BTControlConnectionClient(BTControlConnectionBase):
       for info_hash in info_hashes:
          if not (info_hash in td):
             td[info_hash] = None
-            self.msg_send('GETBTHDATA', [client_idx, info_hash])
+            self.msg_send(b'GETBTHDATA', [client_idx, info_hash])
       
       client.up_to_date = (not (None in td.values()))
       client.infohash_list_update()
@@ -202,19 +201,19 @@ class BTControlConnectionClient(BTControlConnectionBase):
    def input_process_INVALIDCLIENTCOUNT(self, cmd, args):
       """Process INVALIDCLIENTCOUNT message"""
       self.cc = None
-      self.msg_send('GETCLIENTCOUNT', ())
+      self.msg_send(b'GETCLIENTCOUNT', ())
    
    def input_process_INVALIDCLIENTTORRENTS(self, cmd, args):
       """Process INVALIDCLIENTTORRENTS message"""
       client_idx = int(args[0])
       self.bt_clients[client_idx].up_to_date = False
       # FIXME: should probably note that torrent list has become stale here
-      self.msg_send('GETCLIENTTORRENTS', [client_idx,])
+      self.msg_send(b'GETCLIENTTORRENTS', [client_idx,])
       self.utd_status_update()
       
    def input_process_RCREJ(self, cmd, args):
       """Process RCREJ message"""
-      raise BTControlConnectionError('%r got %s line: %r' % (self, cmd, [cmd,] + list(args)))
+      raise BTControlConnectionError('{0!a} got {1} line: {2}'.format(self, cmd, [cmd,] + list(args)))
 
 #------------------------------------------------------------------------------ protocol error handlers
    def error_process_benc(self, msg_string):
@@ -231,29 +230,29 @@ class BTControlConnectionClient(BTControlConnectionBase):
    
    # input command data
    all_set = Universe()
-   commandnoop_set = set(('BUILDBTHFROMMETAINFO', 'STARTBTH', 'STOPBTH',
-      'SUBSCRIBEBTHTHROUGHPUT', 'UNSUBSCRIBEBTHTHROUGHPUT'))
-   commandok_set = commandnoop_set.union(set(('BUILDBTHFROMMETAINFO','DROPBTH')))
+   commandnoop_set = set((b'BUILDBTHFROMMETAINFO', b'STARTBTH', b'STOPBTH',
+      b'SUBSCRIBEBTHTHROUGHPUT', b'UNSUBSCRIBEBTHTHROUGHPUT'))
+   commandok_set = commandnoop_set.union(set((b'BUILDBTHFROMMETAINFO',b'DROPBTH')))
 
    # tuple contents:
    #  1. name of processing method
    #  2. race condition risk
    #  3. commands that may cause this command; None for unprovoked commands
    input_handlers = {
-       'ARGERROR': ('input_process_PROTOERROR', True, all_set),
-       'BENCERROR': ('input_process_PROTOERROR', True, all_set),
-       'BTHDATA': ('input_process_BTHDATA', True, ('GETBTHDATA',)),
-       'BTHTHROUGHPUT': ('input_process_BTHTHROUGHPUT', True, ('GETBTHTHROUGHPUT',)),
-       'BTHTHROUGHPUTSLICE': ('input_process_BTHTHROUGHPUTSLICE', True, None),
-       'CLIENTCOUNT': ('input_process_CLIENTCOUNT', True, ('GETCLIENTCOUNT',)),
-       'CLIENTDATA': ('input_process_CLIENTDATA', True, ('GETCLIENTDATA',)),
-       'CLIENTTORRENTS': ('input_process_CLIENTTORRENTS', True, ('GETCLIENTTORRENTS',)),
-       'COMMANDOK': ('input_process_COMMANDOK', True, commandok_set),
-       'COMMANDNOOP': ('input_process_COMMANDNOOP', True, commandnoop_set),
-       'INVALIDCLIENTCOUNT': ('input_process_INVALIDCLIENTCOUNT', True, None),
-       'INVALIDCLIENTTORRENTS': ('input_process_INVALIDCLIENTTORRENTS', True, None),
-       'RCREJ':('input_process_RCREJ', True, all_set),
-       'UNKNOWNCMD': ('input_process_PROTOERROR', True, all_set)
+       b'ARGERROR': ('input_process_PROTOERROR', True, all_set),
+       b'BENCERROR': ('input_process_PROTOERROR', True, all_set),
+       b'BTHDATA': ('input_process_BTHDATA', True, (b'GETBTHDATA',)),
+       b'BTHTHROUGHPUT': ('input_process_BTHTHROUGHPUT', True, (b'GETBTHTHROUGHPUT',)),
+       b'BTHTHROUGHPUTSLICE': ('input_process_BTHTHROUGHPUTSLICE', True, None),
+       b'CLIENTCOUNT': ('input_process_CLIENTCOUNT', True, (b'GETCLIENTCOUNT',)),
+       b'CLIENTDATA': ('input_process_CLIENTDATA', True, (b'GETCLIENTDATA',)),
+       b'CLIENTTORRENTS': ('input_process_CLIENTTORRENTS', True, (b'GETCLIENTTORRENTS',)),
+       b'COMMANDOK': ('input_process_COMMANDOK', True, commandok_set),
+       b'COMMANDNOOP': ('input_process_COMMANDNOOP', True, commandnoop_set),
+       b'INVALIDCLIENTCOUNT': ('input_process_INVALIDCLIENTCOUNT', True, None),
+       b'INVALIDCLIENTTORRENTS': ('input_process_INVALIDCLIENTTORRENTS', True, None),
+       b'RCREJ':('input_process_RCREJ', True, all_set),
+       b'UNKNOWNCMD': ('input_process_PROTOERROR', True, all_set)
    }
    
    del(all_set)
@@ -276,25 +275,25 @@ class ThroughputCounter:
    log = logger.log
    def __init__(self, history_length=16384, *args, **kwargs):
       self.history_length = history_length
-      self.em_throughput_block.EventListener(self.throughput_block_log)
-      self.em_throughput_slice.EventListener(self.throughput_slice_log)
-      self.em_utd_change_true.EventListener(self.throughput_history_sync)
+      self.em_throughput_block.new_listener(self.throughput_block_log)
+      self.em_throughput_slice.new_listener(self.throughput_slice_log)
+      self.em_utd_change_true.new_listener(self.throughput_history_sync)
    
-   def throughput_history_sync(self, listener):
+   def throughput_history_sync(self):
       """Request throughput block."""
       assert (self.up_to_date)
       for i in range(len(self.bt_clients)):
-         self.msg_send('SUBSCRIBEBTHTHROUGHPUT', [i]) # won't hurt, even if we already are subscribed
+         self.msg_send(b'SUBSCRIBEBTHTHROUGHPUT', [i]) # won't hurt, even if we already are subscribed
          for (infohash, bth) in self.bt_clients[i].torrents.items():
-            self.msg_send('GETBTHTHROUGHPUT', [i, infohash, self.history_length])
+            self.msg_send(b'GETBTHTHROUGHPUT', [i, infohash, self.history_length])
             if not (hasattr(bth, 'bandwith_logger_in')):
                bth.bandwith_logger_in = RingBuffer(self.history_length)
                bth.bandwith_logger_out = RingBuffer(self.history_length)
    
-   def throughput_block_log(self, listener, client_idx, info_hash, td_down, td_up):
+   def throughput_block_log(self, client_idx, info_hash, td_down, td_up):
       """Process received block of throughput data."""
       if (not self.up_to_date):
-         self.log(30, '%r not processing throughput block data since it is not currently up to date.' % (self,))
+         self.log(30, '{0!a} not processing throughput block data since it is not currently up to date.'.format(self))
          return
       
       td_down = td_down[-self.history_length:]
@@ -302,7 +301,7 @@ class ThroughputCounter:
       
       l = len(td_down)
       if (l != len(td_up)):
-         raise ValueError('td_down: %r td_up: %r' % (td_down, td_up))
+         raise ValueError('td_down: {0!a} td_up: {1!a}'.format(td_down, td_up))
       
       padding = [None]*(self.history_length - l)
       # Since we're up to date, the client and info-hash had better exist.
@@ -315,10 +314,10 @@ class ThroughputCounter:
       
       bli.history_index = blo.history_index = (l - 1)
    
-   def throughput_slice_log(self, listener, client_idx, td_down, td_up):
+   def throughput_slice_log(self, client_idx, td_down, td_up):
       """Process received slice of throughput data."""
       if (not self.up_to_date):
-         self.log(30, '%r not processing throughput slice data since it is not currently up to date.' % (self,))
+         self.log(30, '{0!a} not processing throughput slice data since it is not currently up to date.'.format(self))
          return
       
       btc = self.bt_clients[client_idx]
@@ -327,7 +326,7 @@ class ThroughputCounter:
       l = len(td_down)
       
       if (not (l == len(td_up) == len(ihl))):
-         raise ValueError('td_down: %r td_up: %r infohash_list: %r' % (td_down, td_up, ihl))
+         raise ValueError('td_down: {0!a} td_up: {1!a} infohash_list: {2!a}'.format(td_down, td_up, ihl))
       
       bthd = btc.torrents
       
@@ -338,9 +337,9 @@ class ThroughputCounter:
 
 
 class BTControlConnectionClientGonium(BTControlConnectionClient,
-      SockStreamBinary):
+      AsyncDataStream):
    def __init__(self, *args, **kwargs):
       BTControlConnectionClient.__init__(self)
-      SockStreamBinary.__init__(self, *args, **kwargs)
+      AsyncDataStream.__init__(self, *args, **kwargs)
 
 

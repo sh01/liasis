@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -27,17 +27,28 @@ They are intended to be used for serializing these objects, and optionally
 by liasis clients to deserialize the data dumped by liasis and mirror the
 liasis instance's state."""
 
-from benc_structures import BTPeer, BTMetaInfo
-from bt_piecemasks import *
+from .benc_structures import BTPeer, BTMetaInfo
+from .bt_piecemasks import *
+
+def s2b(s):
+   return s.encode('ascii')
 
 
 class BaseMirror:
-   """Baseclass for mirros"""
+   """Baseclass for mirrors"""
 #------------------------------------------------------------------------------ builders for serializers and deserializers of common types
    @staticmethod
    def state_var_ds_instantiater_build(cls):
       def rv(cls_sub, args):
          return cls(*args)
+      return rv
+   
+   @staticmethod
+   def state_var_ds_setstate_build(cls):
+      def rv(cls_sub, args):
+         rv = cls.__new__(cls)
+         rv.__setstate__(args)
+         return rv
       return rv
    
    @staticmethod
@@ -78,6 +89,10 @@ class BaseMirror:
    @staticmethod
    def state_var_s_getinitargs(v):
       return v.__getinitargs__()
+   
+   @staticmethod
+   def state_var_s_getstate(v):
+      return v.__getstate__()
 
 #------------------------------------------------------------------------------ instance creation / serialization methods
    def __init__(self, **kwargs):
@@ -101,13 +116,14 @@ class BaseMirror:
          for attrname in attrnames:
             attrval = getattr(self, attrname)
             if not (attrval is None):
-               state[attrname] = seri(attrval)
-            
+               state[s2b(attrname)] = seri(attrval)
+      
       return state
 
    @classmethod
    def build_from_state(cls, state):
       """Build instance from summarized internal state"""
+      state = dict((k.decode('ascii'),v) for (k,v) in state.items())
       init_dict = {}
       for (seri, deseri, attrnames) in cls.state_vars:
          for attrname in attrnames:
@@ -126,8 +142,7 @@ class BaseMirror:
          for attrname in attrnames:
             attrval = getattr(orig, attrname)
             if not (attrval is None):
-               state[attrname] = seri(attrval)
-            
+               state[s2b(attrname)] = seri(attrval)
       return state
 
 
@@ -157,15 +172,15 @@ class BTClientConnectionMirror(BaseMirror):
       (list, BaseMirror.state_var_ds_identity, ('pieces_wanted', 'blocks_pending',
          'blocks_pending_out', 'pieces_suggested', 'pieces_allowed_fast')),
       # strings
-      (str, BaseMirror.state_var_ds_identity, ('peer_id',)),
+      (bytes, BaseMirror.state_var_ds_identity, ('peer_id',)),
       # special cases
-      (BaseMirror.state_var_s_getinitargs,
-      BaseMirror.state_var_ds_instantiater_build(PieceMask), ('piecemask',)),
+      (BaseMirror.state_var_s_getstate,
+      BaseMirror.state_var_ds_setstate_build(BitMask), ('piecemask',)),
       (BaseMirror.state_var_s_state_get,
       BaseMirror.state_var_ds_bfs_build(BTPeer), ('btpeer',))
    )
    def __repr__(self):
-      return '<%s to %s at %s sent: %d received: %d>' % (
+      return '<{0} to {1} at {2} sent: {3} received: {4}>'.format(
             self.__class__.__name__, self.btpeer, id(self),
             self.content_bytes_out, self.content_bytes_in)
 
@@ -192,12 +207,12 @@ class BTorrentHandlerMirror(BaseMirror):
       'optimistic_unchoke_count', 'content_bytes_in', 'content_bytes_out', 
       'tier', 'tier_index')),
       # str values
-      (str, BaseMirror.state_var_ds_identity, ('peer_id', 'trackerid')),
+      (bytes, BaseMirror.state_var_ds_identity, ('peer_id', 'trackerid')),
       # special cases
-      (BaseMirror.state_var_s_getinitargs, 
-      BaseMirror.state_var_ds_instantiater_build(PieceMask), ('piecemask',)),
-      (BaseMirror.state_var_s_getinitargs,
-      BaseMirror.state_var_ds_instantiater_build(BlockMask),
+      (BaseMirror.state_var_s_getstate,
+      BaseMirror.state_var_ds_setstate_build(BitMask), ('piecemask',)),
+      (BaseMirror.state_var_s_getstate,
+      BaseMirror.state_var_ds_setstate_build(BlockMask),
       ('blockmask', 'blockmask_req')),
       (BaseMirror.state_var_s_state_get, __state_var_ds_metainfo, 
       ('metainfo',)),
@@ -217,9 +232,10 @@ class BTorrentHandlerMirror(BaseMirror):
       return None
    
    def __repr__(self):
-      return '<%s id: %s info_hash: %r basefilename: %r active: %s complete: %s>' % (
-            self.__class__.__name__, id(self), self.metainfo.info_hash,
-            self.target_basename_get(), self.active, self.download_complete)
+      return '<{0} id: {1} info_hash: {2!a} basefilename: {3!a} active: {4}' \
+         'complete: {5}>'.format(self.__class__.__name__, id(self),
+         self.metainfo.info_hash, self.target_basename_get(), self.active,
+         self.download_complete)
 
 
 class BTClientMirror(BaseMirror):
@@ -228,6 +244,7 @@ class BTClientMirror(BaseMirror):
 
    def dictval_state_var_s_state_get(v):
       rv = {}
+      print(v)
       for key in v:
          rv[key] = v[key].state_get()
       return rv
@@ -241,7 +258,7 @@ class BTClientMirror(BaseMirror):
    
    state_vars = (
       (int, BaseMirror.state_ds_static_build(int), ('port',)),
-      (str, BaseMirror.state_var_ds_identity, ('host',)),
+      (bytes, BaseMirror.state_var_ds_identity, ('host',)),
       (BaseMirror.seq_state_var_s_state_get,
       BaseMirror.seq_state_var_ds_bfs_build(BTClientConnectionMirror),
       ('connections_uk',)),
@@ -249,7 +266,7 @@ class BTClientMirror(BaseMirror):
    )
 
    def __repr__(self):
-      return '<%s listen: (%r,%d) id: %s>' % (self.__class__.__name__, self.host, self.port, id(self))
+      return '<{0} listen: ({1!a},{2}) id: {3}>'.format(self.__class__.__name__, self.host, self.port, id(self))
 
 
 class SIHLBTClientMirror(BTClientMirror):
@@ -259,6 +276,5 @@ class SIHLBTClientMirror(BTClientMirror):
       self.infohash_list_update()
 
    def infohash_list_update(self):
-      self.infohash_list = self.torrents.keys()
-      self.infohash_list.sort()
+      self.infohash_list = sorted(self.torrents.keys())
 

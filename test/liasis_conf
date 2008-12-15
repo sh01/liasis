@@ -7,7 +7,7 @@ daemon_config.pickle_filename = 'liasis_state.pickle'
 
 # BTManager config
 btm_config.control_socket_af = socket.AF_UNIX
-btm_config.control_socket_bindargs = ('liasis_ctl.sock',)
+btm_config.control_socket_address = 'liasis_ctl.sock'
 
 # BTClient config
 btc_config.port = 10000

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import cPickle
+import pickle
 import os.path
 
 class FileNamePickler:
@@ -23,14 +23,16 @@ class FileNamePickler:
       This will dump the data to a temporary file, and then rename it to the
       desired filename, to avoid losing data in case of an interrupted
       pickling."""
-   tmp_suffix = '.tmp'
+   tmp_suffix = b'.tmp'
    def __init__(self, filename):
+      if (isinstance(filename, str)):
+         filename = filename.encode('ascii')
       self.filename = os.path.abspath(filename)
       self.filename_tmp = self.filename + self.tmp_suffix
       
    def __call__(self, data, *args, **kwargs):
       """Pickle specified data to backing file"""
-      f = file(self.filename_tmp, 'wb')
-      cPickle.dump(data, f, *args, **kwargs)
+      f = open(self.filename_tmp, 'wb')
+      pickle.dump(data, f, *args, **kwargs)
       f.close()
       os.rename(self.filename_tmp, self.filename)

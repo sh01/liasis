@@ -112,11 +112,12 @@ def benc_str_from_py(obj):
    if (isinstance(obj, int)):
       return 'i{0}e'.format(obj).encode('ascii')
    if (isinstance(obj, (list,tuple,deque))):
-      return b'l' + (b''.join((benc_str_from_py(e) for e in obj)),) + b'e'
+      return b'l' + b''.join((benc_str_from_py(e) for e in obj)) + b'e'
    if (isinstance(obj, dict)):
-      keys = list(obj.keys())
-      keys.sort()
+      keys = sorted(obj.keys())
       return b'd' + b''.join(((benc_str_from_py(key) + benc_str_from_py(obj[key])) for key in keys)) + b'e'
+   
+   raise TypeError('Unable to encode object {0!a} of type {1}.'.format(obj,type(obj)))
 
 
 class BTPeer:
@@ -133,21 +134,21 @@ class BTPeer:
    def state_get(self):
       """Summarize internal state using nested dicts, lists, ints and strings"""
       state = {
-         'ip': long(self.ip),
-         'port': self.port,
+         b'ip': int(self.ip),
+         b'port': self.port,
       }
       if not (self.peer_id is None):
-         state['peer id'] = self.peer_id
+         state[b'peer id'] = self.peer_id
       
       return state
    
    @classmethod
    def build_from_dict(cls, dict):
-      if ('peer id' in dict):
-         peer_id = dict['peer id']
+      if (b'peer id' in dict):
+         peer_id = dict[b'peer id']
       else:
          peer_id = None
-      return cls(ip = dict['ip'], port = dict['port'], 
+      return cls(ip = dict[b'ip'], port = dict[b'port'], 
          peer_id = peer_id)
    
    build_from_state = build_from_dict
@@ -166,7 +167,7 @@ class BTPeer:
    @classmethod
    def seq_build(cls, seq):
       rv = []
-      if (isinstance(seq,basestring)):
+      if (isinstance(seq,(bytes,bytearray,memoryview))):
          assert ((len(seq) % 6) == 0)
          rv = tuple([cls.build_from_str(seq[i:i+6]) for i in range(0,len(seq),6)])
       elif (isinstance(seq, list) or isinstance(seq, tuple)):
@@ -348,7 +349,7 @@ class BTTargetFile:
    def get_openness(self):
       return not (self.file is None)
    
-   def file_open(self, basedir, bufsize=1024, mkdirs=True, lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
+   def file_open(self, basedir, bufsize=4096, mkdirs=True, lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
       assert (self.file is None)
       path = os.path.normpath(os.path.join(basedir, self.path))
       if not (os.path.abspath(path).startswith(os.path.abspath(basedir))):
@@ -367,7 +368,7 @@ class BTTargetFile:
       else:
          mode = 'w+b'
 
-      self.file = file(path, mode, bufsize)
+      self.file = open(path, mode, bufsize)
       fcntl.lockf(self.file.fileno(), lock_op)
    
    def file_close(self):

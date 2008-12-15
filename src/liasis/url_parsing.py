@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify

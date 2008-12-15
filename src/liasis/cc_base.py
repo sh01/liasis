@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -17,12 +17,12 @@
 
 
 import struct
-from cStringIO import StringIO
+from io import BytesIO
 
-from benc_structures import py_from_benc_str, benc_str_from_py
+from .benc_structures import py_from_benc_str, benc_str_from_py
 
 
-class BTControlConnectionError(StandardError):
+class BTControlConnectionError(Exception):
    pass
 
 class BTCCStateError(BTControlConnectionError):
@@ -58,37 +58,35 @@ class BTControlConnectionBase:
    
    def msgstr_send(self, data):
       """Queue single message specified by string to peer."""
+      if (not self):
+         return
       data_len = len(data)
       if (len(data) > self.MSGLEN_MAX):
-         raise BTControlConnectionError('Specified message %r of length %r is longer than maximum message length %r.' % (data, len(data), self.MSGLEN_MAX))
+         raise BTControlConnectionError('Specified message {0!a} of length {1} is longer than maximum message length {2}.'.format(data, len(data), self.MSGLEN_MAX))
 
       header = struct.pack('>II', data_len, self.snum_out)
-      self.send_data(header + data)
+      self.send_bytes((header + data,))
    
    def rcr_presence_check(self, rc_risk, seq_num):
       """Check for presence of acute race condition threat; should be implemented by subclasses that need it"""
       raise NotImplementedError('rcr_presence_check should be implemented by subclass')
    
-   def close_process(self, fd):
+   def process_close(self):
       """Process connection close"""
       pass
    
-   def input_process(self, fd):
+   def process_input(self, in_data):
       """Process input received from peer"""
-      in_data = self.buffers_input[fd]
-      in_data_sio = StringIO(in_data)
+      in_data_sio = BytesIO(in_data)
       in_data_len = len(in_data)
       
       while (True):
          index = in_data_sio.tell()
-         #print 'DO1: %r %r' % (in_data_len, index)
          if ((in_data_len - index) < 8):
             break
          
          header_str = in_data_sio.read(8)
-         #print 'DO2: %r' % (header_str)
          (data_len, seq_num) = struct.unpack('>II', header_str)
-         #print 'DO3: %r %r' % (data_len, seq_num)
          if ((in_data_len - index) < data_len):
             # Message incomplete
             in_data_sio.seek(-8,1)
@@ -105,13 +103,13 @@ class BTControlConnectionBase:
             msg_data = py_from_benc_str(data)
          except ValueError:
             self.error_process_benc(data)
-            self.log(30, 'Protocol benc error on %r, line %r:' % (self, data), exc_info=True)
+            self.log(30, 'Protocol benc error on {0!a}, line {1}:'.format(self, data), exc_info=True)
             continue
          
          cmd = msg_data[0]
          if not (cmd in self.input_handlers):
             self.error_process_unknowncmd(data, msg_data)
-            self.log(30, 'Protocol command error on %r, line %r.' % (self, data))
+            self.log(30, 'Protocol command error on {0!a}, line {1}.'.format(self, data))
             continue
          
          (input_handler_name, rc_risks, acked_list) = self.input_handlers[cmd]
@@ -123,21 +121,21 @@ class BTControlConnectionBase:
             if (self.messages_pending[0][0] in acked_list):
                del(self.messages_pending[0])
             else:
-               raise BTControlConnectionError(" %r got non-spurious command line %r, which doesn't fit pending messages %r." % (self, msg_data, self.messages_pending))
+               raise BTControlConnectionError("{0!a} got non-spurious command line {1}, which doesn't fit pending messages {2!a}.".format(self, msg_data, self.messages_pending))
          
          input_handler = getattr(self, input_handler_name)
          try:
             input_handler(cmd, msg_data[1:])
-         except (IndexError, TypeError, ValueError, KeyError), exc:
+         except (IndexError, TypeError, ValueError, KeyError) as exc:
             self.error_process_arg(data, msg_data, exc)
-            self.log(30, 'Protocol args error on %r, line %r:' % (self, data), exc_info=True)
+            self.log(30, 'Protocol args error on {0}, line {1!a}:'.format(self, data), exc_info=True)
          except:
             # Fatal; caller will try to close connection. Don't try to process
             # anymore of the buffered input.
-            self.buffers_input[fd] = ''
+            self.discard_inbuf_data()
             raise
       
-      self.buffers_input[fd] = in_data_sio.read()
+      self.discard_inbuf_data(in_data_sio.tell())
 
    # protocol error handlers
    def error_process_benc(self, msg_string):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -32,11 +32,11 @@ class BTStatsTracker:
       the bth list."""
       cbo = bth.content_bytes_out
       cbi = bth.content_bytes_in
-      if not (isinstance(cbo, (long,int)) and isinstance(cbi, (long,int))):
-         raise TypeError('Type of cbo=%r or cbi=%r is invalid' % (cbo,cbi))
+      if not (isinstance(cbo, int) and isinstance(cbi, int)):
+         raise TypeError('Type of cbo={0!a} or cbi={1!a} is invalid'.format(cbo,cbi))
       
       if not ((0 <= cbo) and (0 <= cbi)):
-         raise ValueError('Value of cbo=%r or cbi=%r is invalid' % (cbo,cbi))
+         raise ValueError('Value of cbo={0!a} or cbi={1!a} is invalid'.format(cbo,cbi))
       
       self.content_bytes_out += cbo
       self.content_bytes_in += cbi

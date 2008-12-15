@@ -18,7 +18,7 @@
 """Classes for archiving summaries of finished torrents."""
 
 import os.path
-import cPickle
+import pickle
 import binascii
 import time
 
@@ -59,9 +59,9 @@ class BTHPickleDirectoryArchiver:
       self.basepath = basepath
    
    @classmethod
-   def ts_string_get(cls):
-      """Return string representing current time"""
-      return ('%d' % (int(time.time()*cls.ts_factor),))
+   def _ts_bytes_get(cls):
+      """Return bytes representing current time"""
+      return ('{0}'.format(int(time.time()*cls.ts_factor))).encode('ascii')
    
    def targetfile_open(self, bth):
       """Determine targetpath for archival file and open it"""
@@ -70,20 +70,20 @@ class BTHPickleDirectoryArchiver:
       if (not os.path.exists(pf1)):
          os.mkdir(pf1)
       
-      path = os.path.join(pf1, self.ts_string_get())
+      path = os.path.join(pf1, self._ts_bytes_get())
       while (os.path.exists(path)):
-         path = os.path.join(pf1, self.ts_string_get())
+         path = os.path.join(pf1, self._ts_bytes_get())
       # There is a race-condition here; fs semantics prevent us from completely
       # avoiding it. To be on the safe side, one shouldn't allow several
       # archivers to write to the same directory in parallel.
-      f = file(path, 'wb')
+      f = open(path, 'wb')
       return f
    
    def bth_archive(self, bth):
       """Extract important data from bth and archive it"""
       targetfile = self.targetfile_open(bth)
       abth = ArchivedBTH.build_from_bth(bth)
-      cPickle.dump(abth, targetfile, protocol=-1)
+      pickle.dump(abth, targetfile, protocol=-1)
       targetfile.close()
 
 

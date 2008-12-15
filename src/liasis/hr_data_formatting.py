@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -28,5 +28,5 @@ class HRFormattableFloat(float):
          v /= base
          i += 1
       
-      return '%.*f%s' % (precision, v, self.suffixes[i])
+      return '{1:.{0}f}{2}'.format(precision, v, self.suffixes[i])
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -17,34 +17,35 @@
 
 # Central BT client classes.
 
-from cStringIO import StringIO
 import datetime
 import logging
 import math
-import md5
 import os
 import random
-import sha
 import struct
 import time
+from collections import deque
+from hashlib import sha1,md5
+from io import BytesIO
 
 # python-crypto
-from Crypto.Cipher import ARC4
+# FIXME: Get this. Somehow. Anyhow.
+# from Crypto.Cipher import ARC4
 
 # gonium
-from gonium.fd_management import SockStreamBinary, TimerTSShutdown
-from gonium import http_hacks
-from gonium.event_multiplexing import DSEventAggregator, EventListener, EventMultiplexer
+from gonium.fdm import AsyncDataStream, AsyncSockServer
+from gonium.hacks.asynchttpc import build_async_opener
+from gonium.event_multiplexing import DSEventAggregator, EventMultiplexer
 
 # local imports
-import benc_structures
-from bt_exceptions import BTClientError
-from bt_piecemasks import PieceMask, BlockMask
-from benc_structures import BTPeer
-from tracker_proto_structures import tracker_request_build
-from bandwith_management import NullBandwithLimiter, PriorityBandwithLimiter
-from bt_client_mirror import BTClientConnectionMirror, BTorrentHandlerMirror, BTClientMirror
-from bt_semipermanent_stats import BTStatsTracker
+from . import benc_structures
+from .bt_exceptions import BTClientError
+from .bt_piecemasks import BitMask, BlockMask
+from .benc_structures import BTPeer
+from .tracker_proto_structures import tracker_request_build
+from .bandwith_management import NullBandwithLimiter, PriorityBandwithLimiter
+from .bt_client_mirror import BTClientConnectionMirror, BTorrentHandlerMirror, BTClientMirror
+from .bt_semipermanent_stats import BTStatsTracker
 
 MAINTENANCE_INTERVAL = 100
 
@@ -105,7 +106,7 @@ def bmodpow(base, exp, mod):
    return rv
 
 def peer_id_generate():
-   return ('-LS0000-%s' % (md5.new('%s%s' % (os.getpid(), time.time())).digest(),))[:20]
+   return (b'-LS0000-' + md5('{0}{1}'.format(os.getpid(), time.time()).encode('ascii')).digest())[:20]
 
 class ReservedMask:
    EXT_AZUREUS_EM = 2**63
@@ -118,7 +119,7 @@ class ReservedMask:
       return self.__class__(self.mask)
    
    def featuremask_get(self, feature_string):
-      return getattr(self, 'EXT_%s' % feature_string)
+      return getattr(self, 'EXT_{0}'.format(feature_string))
    
    def feature_get(self, feature):
       return self.mask & int(feature)
@@ -138,12 +139,10 @@ class ReservedMask:
       return struct.pack('>Q', self.mask)
    
    def __repr__(self):
-      return '%s(%r)' % (self.__class__.__name__, self.mask)
+      return '{0}({1!a})'.format(self.__class__.__name__, self.mask)
 
    def __int__(self):
       return int(self.mask)
-   def __long__(self):
-      return long(self.mask)
    def __and__(self, other):
       return self.__class__(int(self) & int(other))
    def __or__(self, other):
@@ -159,7 +158,7 @@ class MSEBase:
    # MSE v1.0 protocol constants
    MSE_P = 0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A63A36210000000000090563
    MSE_G = 2
-   MSE_VC = '\x00\x00\x00\x00\x00\x00\x00\x00'
+   MSE_VC = b'\x00\x00\x00\x00\x00\x00\x00\x00'
    
    MSE_PRIVKEY_MIN = 2**159
    MSE_PRIVKEY_MAX = 2**160-1
@@ -173,7 +172,7 @@ class MSEBase:
    @staticmethod
    def mse_data_hash(data):
       """Compute MSE HASH() of provided data string"""
-      return sha.sha(data).digest()
+      return sha1(data).digest()
    
    def mse_variables_clear(self):
       """Set all MSE instance attributes to None"""
@@ -200,17 +199,17 @@ class MSEBase:
    
    def mse_hash1_compute(self):
       """Return MSE HASH('req1', S) value"""
-      return self.mse_data_hash('req1' + self.mse_S)
+      return self.mse_data_hash(b'req1' + self.mse_S)
    
-   def mse_rc4_init(self, initstring_dec='keyA', initstring_enc='keyB'):
+   def mse_rc4_init(self, initstring_dec=b'keyA', initstring_enc=b'keyB'):
       """Initialize RC4 decoder and encoder for this connection"""
       self.mse_rc4_dec = ARC4.new(self.mse_data_hash(initstring_dec + self.mse_S + self.mse_skey))
       self.mse_rc4_enc = ARC4.new(self.mse_data_hash(initstring_enc + self.mse_S + self.mse_skey))
-      # Apparently "discarding the first 1024 bytes of RC4 output" is 
+      # Apparently "discarding the first 1024 bytes of RC4 output" is
       # equivalent to feeding the algorithm 1024 bytes of arbitrary data and
       # discarding the result.
-      self.mse_rc4_dec.decrypt('\x00'*1024)
-      self.mse_rc4_enc.encrypt('\x00'*1024)
+      self.mse_rc4_dec.decrypt(b'\x00'*1024)
+      self.mse_rc4_enc.encrypt(b'\x00'*1024)
    
    @classmethod
    def pad_str_build(self):
@@ -232,7 +231,7 @@ class MSEBase:
          j //= 256
          max_e += 1
       
-      l = []
+      l = bytearray()
       j = i
       for e in range(max_e,-1,-1):
          f = 256**e
@@ -243,11 +242,11 @@ class MSEBase:
       if not (fix_len is None):
          len_delta = (fix_len - len(l))
          if (len_delta > 0):
-            l = [0]*len_delta + l
+            l = bytes(len_delta) + bytes(l)
          if (len_delta < 0):
-            raise ValueError('Encoding of %d would result in binary string %r, which is longer than %d bytes.' % (i, ''.join([chr(el) for el in l]), fix_len))
+            raise ValueError('Encoding of {0} would result in binary string {1!a}, which is longer than {2} bytes.'.forma(i, l, fix_len))
       
-      return ''.join([chr(el) for el in l])
+      return bytes(l)
    
    @staticmethod
    def mse_s2i(s):
@@ -261,21 +260,21 @@ class MSEBase:
    
    def mse_hash2_compute(self, skey):
       """Return MSE HASH('req2', SKEY) xor HASH('req3', S) value based on specified SKEY"""
-      hv1 = self.mse_data_hash('req2' + skey)
-      hv2 = self.mse_data_hash('req3' + self.mse_S)
-      res = ''
+      hv1 = self.mse_data_hash(b'req2' + skey)
+      hv2 = self.mse_data_hash(b'req3' + self.mse_S)
+      res = b''
       hlen = len(hv1)
       if (hlen != len(hv2)):
-         raise StandardError('Bogus hash results: hv1: %r hv2: %r from parameters skey: %r and mse_S: %r.' % (hv1, hv2, skey, self.mse_S))
+         raise Exception('Bogus hash results: hv1: {0!a} hv2: {1!a} from parameters skey: {2!a} and mse_S: {3!a}.'.format(hv1, hv2, skey, self.mse_S))
       
-      rv = ''.join([chr(ord(hv1[i]) ^ ord(hv2[i])) for i in range(hlen)])
+      rv = b''.join([chr(ord(hv1[i]) ^ ord(hv2[i])) for i in range(hlen)])
       
       return rv
    
 
-class BTClientConnection(SockStreamBinary, MSEBase):
+class BTClientConnection(AsyncDataStream, MSEBase):
    """Connection to a single BT peer"""
-   pstr = 'BitTorrent protocol' #ver 1.0
+   pstr = b'BitTorrent protocol' #ver 1.0
    
    logger = logging.getLogger('BTClientConnection.l1')
    log = logger.log
@@ -322,12 +321,12 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    blocks_pending_out_limit = 100
    
    def __init__(self, *args, **kwargs):
-      """There's a lot of stuff our caller might not know here, namely if we were instantiated by the SockServer.
+      """ Initialize BTClientConnection instance.
       
       The instantiater will need to set some variables manually if this is
       an outgoing connection.
       """
-      SockStreamBinary.__init__(self, *args, **kwargs)
+      AsyncDataStream.__init__(self, *args, **kwargs)
       # purely for convenience
       self.btpeer = None
       
@@ -340,7 +339,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       self.p_choked = True
       self.pieces_wanted = []
       self.blocks_pending = set()
-      self.blocks_pending_out = []
+      self.blocks_pending_out = deque()
       self.pieces_suggested = set()
       self.pieces_allowed_fast = set()
       self.piece_max = None
@@ -348,7 +347,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       self.handshake_sent = False
       self.piecemask = None   # piece status of peer
       self.sync_done = False
-      self.cleaning_up = False # currently running self.clean_up() ?
+      self.closing = False # currently running self.close() ?
       self.buffer_input_len = 0
       self.bandwith_request = None
       self.flush_done_callback = None
@@ -372,7 +371,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       self.ts_request_last_out = 0
       self.bandwith_logger_in = None
       self.bandwith_manager_out = None
-      self.bt_buffer_output = ''
+      self.bt_buffer_output = bytearray()
       self.peer_req_count = 0 # total count of blocks requested by peer
       # extensions that are active on this connection
       self.ext_Fast = False
@@ -393,10 +392,12 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       self.data_auto_encrypt = None
    
    # main class API
-   def connection_init(self, address, *args, **kwargs):
+   @classmethod
+   def peer_connect(cls, ed, address, *args, **kwargs):
       """Connect to peer"""
-      SockStreamBinary.connection_init(self, (str(address[0]), address[1]), *args, **kwargs)
-      self.btpeer = BTPeer(self.target[0], self.target[1], None)
+      self = cls.build_sock_connect(ed, address, *args, **kwargs)
+      self.btpeer = BTPeer(address[0], address[1], None)
+      return self
       
    def init_finish(self, bth):
       """Finish variable initialization by copying data from BTorrentHandler instance"""
@@ -405,7 +406,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       self.info_hash = bth.metainfo.info_hash
       piece_count = len(bth.metainfo.piece_hashes)
       self.piece_max = piece_count - 1
-      self.piecemask = PieceMask(piece_count)
+      self.piecemask = BitMask(bitlen=piece_count)
       self.bandwith_logger_in = bth.bandwith_logger_in
       self.bandwith_manager_out = bth.bandwith_manager_out
       self.instance_init_done = True
@@ -417,14 +418,14 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def maintenance_perform(self):
       """Send keepalives, check interest status, etc; should be regularly called by timer"""
       now = time.time()
-      if not (self.buffers_output and self.buffers_output.keys()[0]):
+      if not (self):
          return
       if (now > (self.ts_traffic_last_in + self.connection_timeout)):
          if (self.sync_done):
-            self.log(20, 'Soft timeout on %s. Disconnecting.' % (self,))
-            self.clean_up() # not fatal, so remember peer for the moment
+            self.log(20, 'Soft timeout on {0}. Disconnecting.'.format(self))
+            self.close() # not fatal, so remember peer for the moment
          else:
-            self.log2(22, "Hard timeout (didn't finish sync) on %s. Disconnecting." % (self,))
+            self.log2(22, "Hard timeout (didn't finish sync) on {0}. Disconnecting.".format(self))
             self.client_error_process()
          return
       if (((now - self.ts_traffic_last_out) > 15) and self.handshake_sent):
@@ -437,7 +438,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
           (self.blocks_pending != set()) and
           (self.time_block_in_waiting + self.block_timeout < time.time())):
          self.s_snubbed = True
-         self.log2(16, 'Peer at %s appears to have started snubbing us.' % (self,))
+         self.log2(16, 'Peer at {0} appears to have started snubbing us.'.format(self))
          first = True
          for (piece_index, block_index) in self.blocks_pending.copy():
             if (first):
@@ -449,13 +450,14 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def piece_have_new(self, piece_index):
       """Process notification that our BTorrentHandler has finished a piece"""
       self.have_send(piece_index)
-      for (i_p,i_b) in [(i_p,i_b) for (i_p, i_b) in self.blocks_pending if (i_p == piece_index)]:
+      for (i_p,i_b) in ((i_p,i_b) for (i_p, i_b) in self.blocks_pending if (i_p == piece_index)):
          self.block_cancel(i_p,i_b)
 
-   def clean_up(self, *args, **kwargs):
+   def close(self, *args, **kwargs):
       """Close connection and disassociate ourselves from BT object tree"""
-      self.cleaning_up = True
-      SockStreamBinary.clean_up(self, *args, **kwargs)
+      self.closing = True
+      if (self):
+         AsyncDataStream.close(self, *args, **kwargs)
       if not (self.bth is None):
          self.bth.connection_remove(self)
          self.bth.pieces_availability_adjust_mask(self.piecemask, -1)
@@ -476,7 +478,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          self.flush_done_callback()
          self.flush_done_callback = None
          
-      self.cleaning_up = False
+      self.closing = False
 
    def uploading_start(self):
       """Allow ourselves to send blocks to peer"""
@@ -492,14 +494,14 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          return
       if ((not self.p_choked) and choke):
          self.choke_send(True)
-         if (self.blocks_pending_out != []):
+         if (self.blocks_pending_out):
             if (self.ext_Fast):
                # Without the Fast Extension, choking implicitly cancels all
                # pending blocks
                for (piece_index, start, length) in self.blocks_pending_out:
                   self.reject_request_send(piece_index, start, length)
             
-            del(self.blocks_pending_out[:])
+            self.blocks_pending_out.clear()
       self.uploading = False
    
    def block_send_buffer(self, flush_done_callback):
@@ -509,8 +511,8 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       if (not self.blocks_pending_out):
          return True
       assert (self.bandwith_request is None)
-      (piece_index, block_start, block_length) = self.blocks_pending_out.pop(0)
-      self.log2(12, 'Connection %s queueing block p%d, s%d, l%d for peer.' % (self, piece_index, block_start, block_length))
+      (piece_index, block_start, block_length) = self.blocks_pending_out.popleft()
+      self.log2(12, 'Connection {0} queueing block p{1}, s{2}, l{3} for peer.'.format(self, piece_index, block_start, block_length))
       
       data = struct.pack('>LL', piece_index, block_start)
       self.bth.bt_disk_io.seek(self.bth.piece_length_get()*piece_index + block_start)
@@ -537,14 +539,14 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def data_flush_callback(self, bandwith_request, bytes_granted, request_done):
       """Send at most <bytes> bytes of buffered data down the protocol stack"""
       assert (len(self.bt_buffer_output) >= bytes_granted)
-      self.send_data(self.bt_buffer_output[:bytes_granted])
+      self.send_bytes(self.bt_buffer_output[:bytes_granted])
       
-      self.bt_buffer_output = self.bt_buffer_output[bytes_granted:]
+      del(self.bt_buffer_output[:bytes_granted])
       
       if (request_done):
-         if (self.bt_buffer_output != ''):
+         if (self.bt_buffer_output):
             #self.bandwith_manager_out.bandwith_take(len(self.bt_buffer_output))
-            self.send_data(self.bt_buffer_output)
+            self.send_bytes((self.bt_buffer_output,))
          self.bandwith_request = None
          if not (self.flush_done_callback is None):
             self.flush_done_callback(self)
@@ -556,23 +558,23 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       if (self.data_auto_encrypt):
          data = self.data_auto_encrypt(data)
          
-      if ((self.bt_buffer_output != '') or buffering_force):
+      if (self.bt_buffer_output or buffering_force):
          self.bt_buffer_output += data
       else:
-         self.send_data(data, fd, **kwargs)
+         self.send_bytes((data,), **kwargs)
          if (bw_count):
             self.bandwith_manager_out.bandwith_take(len(data))
    
    # MSE handshakes
    def mse_hss1_send(self):
       """Send MSE handshake sequence 1 / 2 to peer"""
-      if (self.cleaning_up):
+      if (self.closing):
          return
       self.send_data_bt(self.mse_i2s(self.mse_key_pub_self) + self.pad_str_build(), bw_count=False)
    
    def mse_hss5_send(self, crypto_method, pad=None):
       """Send MSE handshake sequence 5 to peer"""
-      if (self.cleaning_up):
+      if (self.closing):
          return
       if (pad is None):
          pad = self.pad_str_build()
@@ -587,18 +589,19 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          return self.MSE_CM_PLAIN
       elif (self.MSE_CM_RC4 & self.mse_peer_crypto_provide):
          return self.MSE_CM_RC4
-      raise MSEProtocolError('Provided crypto mask %s of client on connection %r does not contain any methods supported by us.' %
-            (self.mse_peer_crypto_provide, self))
+      raise MSEProtocolError('Provided crypto mask {0} of client on connection'
+         '{1!a} does not contain any methods supported by us.'
+         ''.format(self.mse_peer_crypto_provide, self))
    
    # BT-level handshakes
    def handshake_str_get(self):
       """Return the BT handshake string we are going to send"""
       assert (self.instance_init_done and (len(self.info_hash) == 20) and (len(self.self_id) == 20))
-      return '%s%s%s%s%s' % (struct.pack('>B', len(self.pstr)), self.pstr, self.reserved.binstring_get(), self.info_hash, self.self_id)
+      return b''.join((struct.pack('>B', len(self.pstr)), self.pstr, self.reserved.binstring_get(), self.info_hash, self.self_id))
    
    def handshake_send(self):
       """Send handshake to peer"""
-      if (self.cleaning_up):
+      if (self.closing):
          return
       self.send_data_bt(self.handshake_str_get())
       self.handshake_sent = True
@@ -606,14 +609,14 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    # regular BT traffic
    def keepalive_send(self):
       """Send keepalive message to peer"""
-      if (self.cleaning_up):
+      if (self.closing):
          return
 
-      self.send_data_bt('\x00\x00\x00\x00')
+      self.send_data_bt(b'\x00\x00\x00\x00')
 
    def msg_send(self, msg_id, payload, bw_count=True, buffering_force=False):
       """Send message with specified msg_id and payload to peer"""
-      if (self.cleaning_up):
+      if (self.closing):
          return
       header = struct.pack('>LB', (len(payload) + 1), msg_id)
       self.send_data_bt(header + payload, bw_count=bw_count, buffering_force=buffering_force)
@@ -623,30 +626,30 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       """Send CHOKE/UNCHOKE message to peer and save status"""
       choking = bool(choking)
       if (choking == self.p_choked):
-         raise BTCStateError('peer choked status is already %s.' % (self.p_choked,))
-      self.log2(12, '%s changes peer choked status to %s.' % (self, choking))
+         raise BTCStateError('peer choked status is already {0}.'.format(self.p_choked))
+      self.log2(12, '{0} changes peer choked status to {1}.'.format(self, choking))
       
       if (choking):
          msg_id = self.MSG_ID_CHOKE
       else:
          msg_id = self.MSG_ID_UNCHOKE
          
-      self.msg_send(msg_id, '')
+      self.msg_send(msg_id, b'')
       self.p_choked = choking
       
    def interest_send(self, interest):
       """Send INTERESTED/NOT INTERESTED message to peer and save status"""
       interest = bool(interest)
       if (interest == self.s_interest):
-         raise BTCStateError('self interest status is already %s.' % (self.s_interest,))
-      self.log2(12, '%s changes interest status to %s' % (self, interest))
+         raise BTCStateError('self interest status is already {0}.'.format(self.s_interest,))
+      self.log2(12, '{0} changes interest status to {1}'.format(self, interest))
       
       if (interest):
          msg_id = self.MSG_ID_INTERESTED
       else:
          msg_id = self.MSG_ID_NOTINTERESTED
       
-      self.msg_send(msg_id, '')
+      self.msg_send(msg_id, b'')
       self.s_interest = interest
       
    def have_send(self, piece_index):
@@ -656,7 +659,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       
    def bitfield_send(self):
       """Send BITFIELD message to peer"""
-      self.msg_send(self.MSG_ID_BITFIELD, self.bth.piecemask.bitfield_get())
+      self.msg_send(self.MSG_ID_BITFIELD, self.bth.piecemask)
       
    def block_request(self, piece_index, block):
       """Send a REQUEST message for a specific block identified by internal indexes"""
@@ -665,7 +668,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       assert (block_start <= piece_index_max)
       block_len = min(self.bth.block_length, piece_index_max - block_start + 1)
       
-      self.log2(12, 'Connection %s requesting block p%d, s%d, l%d.' % (self, piece_index, block_start, block_len))
+      self.log2(12, 'Connection {0} requesting block p{1}, s{2}, l{3}.'.format(self, piece_index, block_start, block_len))
       
       msg_payload = struct.pack('>LLL', piece_index, block_start, block_len)
       self.msg_send(self.MSG_ID_REQUEST, msg_payload)
@@ -673,7 +676,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          # BTC might have been terminated during send
          return
       
-      if (self.blocks_pending == set()):
+      if not (self.blocks_pending):
          self.time_block_in_waiting = time.time()
       self.blocks_pending.add((piece_index, block))
       self.bth.blockmask_req.block_have_set(piece_index, block, True)
@@ -686,7 +689,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       assert (block_start <= piece_index_max)
       block_len = min(self.bth.block_length, piece_index_max - block_start + 1)
       
-      self.log2(12, 'Connection %s cancelling request of block p%d, s%d, l%d.' % (self, piece_index, block_start, block_len))
+      self.log2(12, 'Connection {0} cancelling request of block p{1}, s{2}, l{3}.'.format(self, piece_index, block_start, block_len))
       msg_payload = struct.pack('>LLL', piece_index, block_start, block_len)
       
       self.block_pending_cancel((piece_index, block_index))
@@ -694,7 +697,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    
    def reject_request_send(self, piece_index, block_start, block_length):
       """"Send REJECT REQUEST message for specified pending block"""
-      self.log2(12, 'Connection %s rejecting peer request of block p%d, s%d, l%d.' % (self, piece_index, block_start, block_length))
+      self.log2(12, 'Connection {0} rejecting peer request of block p{1}, s{2}, l{3}.'.format(self, piece_index, block_start, block_length))
       msg_payload = struct.pack('>LLL', piece_index, block_start, block_length)
       self.msg_send(self.MSG_ID_REJECT_REQUEST, msg_payload)
       
@@ -724,23 +727,23 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          # exist, for most of the download period they won't, and we can save
          # cycles in those cases.
          for piece in self.pieces_allowed_fast:
-            if ((not self.bth.piecemask.piece_have_get(piece)) and self.piecemask.piece_have_get(piece)):
+            if ((not self.bth.piecemask.bit_get(piece)) and self.piecemask.bit_get(piece)):
                break
          else:
             return
          # A: Yes, there are.
-         pm_out = PieceMask(self.piecemask.length)
+         pm_out = BitMask(bitlen=self.piecemask.bitlen)
          for piece in self.pieces_allowed_fast:
-            pm_out.piece_have_set(self.piecemask.piece_have_get(piece))
+            pm_out.bit_set(self.piecemask.bit_get(piece))
          self.pieces_wanted_update(pm_out)
       else:
          self.pieces_wanted_update()
 
       for index in self.pieces_wanted:
          if (index == self.piece_max):
-            subrange = xrange(self.bth.blockmask.blocks_per_piece_last)
+            subrange = range(self.bth.blockmask.blocks_per_piece_last)
          else:
-            subrange = xrange(self.bth.blockmask.blocks_per_piece)
+            subrange = range(self.bth.blockmask.blocks_per_piece)
          for sub_index in subrange:
             if (len(self.blocks_pending) >= self.pieces_queuelen):
                break
@@ -760,7 +763,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def block_pending_cancel(self, block):
       """Process a (piece becoming non-pending) - event"""
       self.blocks_pending.remove(block)
-      if (self.blocks_pending == set()):
+      if not (self.blocks_pending):
          self.time_block_in_waiting = None
          self.s_snubbed = False
       # IFFY: This might become incorrect if we ever implemented endgame-
@@ -774,7 +777,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       if (self.bth):
          self.bth.peer_connection_error_process(self)
 
-      self.clean_up()
+      self.close()
    
    def input_buffer_set(self, fd, val):
       """Set plain text input buffer content to specified value"""
@@ -784,16 +787,12 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          self.buffers_input[fd] = val
       self.buffer_input_len = len(val)
    
-   def input_process(self, fd):
+   def process_input(self, in_data):
       """Deal with input to our buffers"""
       if (self.closing):
          # Never mind. We're in the process of shutting down because of
          # protocol or internal errors. Trying to process the data
          # again would most likely just lead to infinite recursion
-         return
-      try:
-         in_data = self.buffers_input[fd]
-      except KeyError:
          return
       
       self.ts_traffic_last_in = time.time()
@@ -801,7 +800,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       if not (self.data_auto_decrypt is None):
          # MSE input decryption
          self.in_buf_plain += self.data_auto_decrypt(in_data)
-         self.buffers_input[fd] = ''
+         self.discard_inbuf_data()
          in_data = self.in_buf_plain
       
       self.bandwith_logger_in.bandwith_take(len(in_data) - self.buffer_input_len)
@@ -815,18 +814,16 @@ class BTClientConnection(SockStreamBinary, MSEBase):
                return
             self.mse_key_pub_peer = self.mse_s2i(in_data[:96])
             self.mse_S_compute()
-            in_data = in_data[96:]
-            self.input_buffer_set(fd, in_data)
+            self.discard_inbuf_data(96)
             self.mse_hss1_send()
          
          if (self.mse_init == 1):
             if (self.buffer_input_len >= 20):
                hash1 = self.mse_hash1_compute()
-               i = in_data.find(hash1)
+               i = bytes(in_data).find(hash1)
                if (i < 0):
                   return
-               in_data = in_data[i + len(hash1):]
-               self.input_buffer_set(fd, in_data)
+               self.discard_inbuf_data(i + len(hash1))
                self.mse_init = 2
             else:
                return
@@ -837,14 +834,13 @@ class BTClientConnection(SockStreamBinary, MSEBase):
                try:
                   self.mse_skey = self.btc.mse_hash2_resolve(self, hash2_val)
                except UnknownTorrentError:
-                  self.log(25, "Handshake validation on %s failed; not tracking torrent with infohash fitting MSE handshake data." % (self,), exc_info=False)
+                  self.log(25, "Handshake validation on {0} failed; not tracking torrent with infohash fitting MSE handshake data.".format(self), exc_info=False)
                   self.mse_init = False
-                  self.input_buffer_set(fd, '')
-                  self.clean_up()
+                  self.discard_inbuf_data()
+                  self.close()
                   return
                self.mse_rc4_init()
-               in_data = in_data[20:]
-               self.input_buffer_set(fd, in_data)
+               self.discard_inbuf_data(20)
                self.mse_init = 3
             else:
                return
@@ -853,12 +849,12 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             if (self.buffer_input_len >= self.MSE_LEN_CRYPTCHUNK1):
                data_dec = self.mse_rc4_dec.decrypt(in_data[:self.MSE_LEN_CRYPTCHUNK1])
                if not (data_dec.startswith(self.MSE_VC)):
-                  raise MSEProtocolError('Connection %r got invalid VC value %r from peer. Closing.' % (data_dec[:len(self.MSE_VC)]))
+                  raise MSEProtocolError('Connection {0} got invalid VC value {1} from peer. Closing.'.format(data_dec[:len(self.MSE_VC)]))
             
                data_dec_2 = data_dec[len(self.MSE_VC):]
                (self.mse_peer_crypto_provide, self.mse_padC_len) = struct.unpack('>IH', data_dec_2)
                in_data = in_data[self.MSE_LEN_CRYPTCHUNK1:]
-               self.input_buffer_set(fd, in_data)
+               self.discard_inbuf_data(self.MSE_LEN_CRYPTCHUNK1)
                self.mse_init = 4
             else:
                return
@@ -867,13 +863,12 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             chunk_len = self.mse_padC_len + 2
             if (self.buffer_input_len >= chunk_len):
                data_dec = self.mse_rc4_dec.decrypt(in_data[:chunk_len])
-               in_data = in_data[chunk_len:]
-               self.input_buffer_set(fd, in_data)
+               self.discard_inbuf_data(chunk_len)
                self.mse_peer_ia_len = struct.unpack('>H', data_dec[-2:])[0]
                if (self.mse_peer_ia_len > 0):
                   self.mse_init = 5
                else:
-                  self.in_buf_plain = ''
+                  self.in_buf_plain = b''
                   self.mse_init = 6
             else:
                return
@@ -881,8 +876,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          if (self.mse_init == 5):
             if (self.buffer_input_len >= self.mse_peer_ia_len):
                self.in_buf_plain = self.mse_rc4_dec.decrypt(in_data[:self.mse_peer_ia_len])
-               in_data = in_data[self.mse_peer_ia_len:]
-               self.input_buffer_set(fd, in_data)
+               self.discard_inbuf_data(self.mse_peer_ia_len)
                self.mse_init = 6
             else:
                return
@@ -894,16 +888,15 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             self.mse_init = False
             self.mse_init_done = True
             if (cm == self.MSE_CM_PLAIN):
-               in_data = self.in_buf_plain + in_data
-               self.input_buffer_set(fd, in_data)
+               in_data[:] = self.in_buf_plain + in_data
             elif (cm == self.MSE_CM_RC4):
                self.data_auto_decrypt = self.mse_rc4_dec.decrypt
                self.data_auto_encrypt = self.mse_rc4_enc.encrypt
             else:
                # can't happen
-               raise ValueError('Unknown chosen crypto method %r.' % (cm,))
-            self.log2(15, '%r finished MSE initialization. Using crypto method %d.' % (self, cm))
-            self.input_process(fd)
+               raise ValueError('Unknown chosen crypto method {0}.'.format(cm))
+            self.log2(15, '{0} finished MSE initialization. Using crypto method {1}.'.format(self, cm))
+            self._process_input1()
             return
       
       # Unless the connection has just started and we haven't noticed that it
@@ -914,41 +907,41 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          # cases, but should always do the Right Thing.
          pstrlen = len(self.pstr)
          pstrlen_bin = chr(pstrlen)
-         fmtstr = '>B%ss8s20s20s' % pstrlen
+         fmtstr = '>B{0}s8s20s20s'.format(pstrlen)
          header_size = struct.calcsize(fmtstr)
-         if (in_data == ''):
+         if (not in_data):
             return # nothing to see here, yet.
-         if not (in_data.startswith(pstrlen_bin)):
+         if not (in_data[0:1] == pstrlen_bin):
             # Not what we expect.
             if (self.mse_init_done):
-               self.log(30, 'Presumed BT client at %r started with data %r, which is bogus. Closing connection.' % (self.btpeer, in_data))
+               self.log(30, 'Presumed BT client at {0} started with data {1}, which is bogus. Closing connection.'.format(self.btpeer, in_data))
                self.client_error_process()
             else:
                # Might be a MSE connection, try crypto handshake.
                self.mse_init = 1
                self.mse_key_self_build()
-               self.input_process(fd)
+               self._process_input1()
             return
          if (len(in_data) < (pstrlen + 1)):
             return # nothing more to see here, yet
-         if not (in_data.startswith('%s%s' % (pstrlen_bin, self.pstr))):
+         if not (in_data.startswith(b''.join((pstrlen_bin, self.pstr)))):
             # Not what we expect, either.
             if (self.mse_init_done):
-               self.log(30, 'Presumed BT client at %r started with data %r, which is bogus. Closing connection.' % (self.btpeer, in_data))
+               self.log(30, 'Presumed BT client at {0} started with data {1!a}, which is bogus. Closing connection.'.format(self.btpeer, in_data))
                self.client_error_process()
             else:
                # Might be a MSE connection, try crypto handshake.
                self.mse_init = 1
                self.mse_key_self_build()
-               self.input_process(fd)
+               self._process_input1()
             return
          if (len(in_data) < header_size):
             return # Beginning is good, but handshake data not complete yet.
-
+         
          # Beginning is good, and handshake data complete.
          (pstrlen_in, pstr_in, reserved_in_raw, info_hash_in, peer_id_in) = struct.unpack(fmtstr, in_data[:header_size])
          reserved_in = ReservedMask.build_from_binstring(reserved_in_raw)
-         self.log(15, 'Got valid handshake data from peer at %r: info_hash %r, peer_id %r, reserved %r' % (self.btpeer, info_hash_in, peer_id_in, reserved_in))
+         self.log(15, 'Got valid handshake data from peer at {0!a}: info_hash {1!a}, peer_id {2!a}, reserved {3!a}'.format(self.btpeer, info_hash_in, peer_id_in, reserved_in))
          if not (self.handshake_sent):
             # This is an incoming connection, and up to here we didn't know
             # which torrent it was associated with. Ask for outside validation
@@ -957,16 +950,16 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             try:
                self.handshake_callback(self)
             except ResourceLimitError:
-               self.log(15, 'Closing %s because of resource limit.' % (self,), exc_info=True)
-               self.clean_up()
+               self.log(15, 'Closing {0} because of resource limit.'.format(self), exc_info=True)
+               self.close()
                return
-            except BTCStateError, exc:
-               self.log(14, "Closing %s because of handler readiness failure %r." % (self, str(exc)))
-               self.clean_up()
+            except BTCStateError as exc:
+               self.log(14, "Closing {0} because of handler readiness failure {1!a}.".format(self, str(exc)))
+               self.close()
                return
             except UnknownTorrentError:
-               self.log(25, 'Handshake validation on %s failed; not tracking torrent with infohash %r.' % (self, info_hash_in), exc_info=False)
-               self.clean_up()
+               self.log(25, 'Handshake validation on {0} failed; not tracking torrent with infohash {1!a}.'.format(self, info_hash_in), exc_info=False)
+               self.close()
                return
             
             # Connection is valid.
@@ -978,39 +971,39 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             # been
             if (self.peer_id != peer_id_in):
                if (self.peer_id):
-                  self.log(30, 'Peer at %r returned peer_id %r, expected %r.' % (self.btpeer, peer_id_in, peer_id))
+                  self.log(30, 'Peer at {0!a} returned peer_id {1!a}, expected {2!a}.'.format(self.btpeer, peer_id_in, peer_id))
                   self.client_error_process()
                   return
                else:
                   self.peer_id = peer_id_in
             if (self.info_hash != info_hash_in):
-               self.log(30, 'Peer at %r returned info_hash %r, expected %r.' % (self.btpeer, info_hash_in, self.info_hash))
+               self.log(30, 'Peer at {0!a} returned info_hash {1!a}, expected {2!a}.'.format(self.btpeer, info_hash_in, self.info_hash))
                self.client_error_process()
                return
             self.bitfield_send()
          
          if (self.peer_id == self.self_id):
-            self.log(35, 'Peer at %s uses same peer id %r as we do; closing.' % (self.btpeer, self.self_id))
+            self.log(35, 'Peer at {0} uses same peer id {1} as we do; closing.'.format(self.btpeer, self.self_id))
             self.client_error_process()
             return
          
          self.reserved &= reserved_in
          if (self.reserved.feature_get(ReservedMask.EXT_FAST)):
-            self.log2(15, 'Peer at %s supports Fast Extension; activating it.')
+            self.log2(15, 'Peer at {0} supports Fast Extension; activating it.'.format(self.btpeer))
             self.ext_Fast = True
          
          self.handshake_processed = True
          if not (fd in self.buffers_input):
             return
          in_data = in_data[header_size:]
-         self.input_buffer_set(fd, in_data)
+         self.discard_inbuf_data(header_size)
          if (len(in_data) == 0):
             return
       
       # regular protocol mode
       in_data_len = len(in_data)
-      in_data_sio = StringIO(in_data)
-      while (fd in self.buffers_input):
+      in_data_sio = BytesIO(in_data)
+      while (self._fw):
          index = in_data_sio.tell()
          if ((in_data_len - index) < 4):
             break
@@ -1027,19 +1020,19 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             input_handler = self.input_handlers[msg_id]
          except KeyError:
             in_data_sio.seek(-5)
-            self.log(30, 'Peer %r sent message with bogus msg_id %d. Closing connection and discarding client. Message was: %r' % (self.btpeer, msg_id, in_data_sio.read(4 + msg_len)))
+            self.log(30, 'Peer {0!a} sent message with bogus msg_id {1}. Closing connection and discarding client. Message was: {2!a}'.format(self.btpeer, msg_id, in_data_sio.read(4 + msg_len)))
             self.client_error_process()
             return
          
          try:
             input_handler(self, in_data_sio, msg_len-1)
-         except (BTClientError, ValueError, struct.error, AssertionError), exc:
-            self.log(30, 'Exception %r on connection peer %r. Closing connection and discarding peer.' % (str(exc), self.btpeer,))
+         except (BTClientError, ValueError, struct.error, AssertionError) as exc:
+            self.log(30, 'Exception {0!a} on connection peer {1!a}. Closing connection and discarding peer.'.format(str(exc), self.btpeer))
             self.client_error_process()
             return
          
          if not (self.sync_done):
-            self.log(18, 'Sync on conn %s finished.' % (self,))
+            self.log(18, 'Sync on conn {0} finished.'.format(self))
             self.maintenance_perform() # set interest status
             self.sync_done = True
          # don't make any assumptions about where the handler has seeked to
@@ -1047,15 +1040,14 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       
       if not (fd in self.buffers_input):
          return
-      
-      self.input_buffer_set(fd, in_data_sio.read()) 
+      self.discard_inbuf_data(in_data_sio.tell())
    
    #BT Protocol v1.0 message handlers
    def input_process_choke(self, data_sio, payload_len):
       """Process CHOKE message"""
       if (payload_len != 0):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 0.' % (payload_len,))
-      self.log2(12, '%s got choked by peer' % (self,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
+      self.log2(12, '{0} got choked by peer'.format(self))
       self.s_choked = True
       if not (self.ext_Fast):
          for block in self.blocks_pending.copy():
@@ -1064,8 +1056,8 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def input_process_unchoke(self, data_sio, payload_len):
       """Process UNCHOKE message"""
       if (payload_len != 0):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 0.' % (payload_len,))
-      self.log2(12, '%s got unchoked by peer' % (self,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
+      self.log2(12, '{0} got unchoked by peer'.format(self))
       self.s_choked = False
       if (self.downloading and self.bth):
          self.blocks_request()
@@ -1073,24 +1065,24 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def input_process_interested(self, data_sio, payload_len):
       """Process INTERESTED message"""
       if (payload_len != 0):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 0.' % (payload_len,))
-      self.log2(12, '%s notes interest by peer' % (self,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
+      self.log2(12, '{0} notes interest by peer'.format(self))
       self.p_interest = True
 
    def input_process_notinterested(self, data_sio, payload_len):
       """Process NOT INTERESTED message"""
       if (payload_len != 0):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 0.' % (payload_len,))
-      self.log2(12, '%s notes disinterest by peer' % (self,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
+      self.log2(12, '{0} notes disinterest by peer'.format(self))
       self.bth.downloaders_update(discard_optimistic_unchokes=False)
       self.p_interest = False
       
    def input_process_have(self, data_sio, payload_len):
       """Process HAVE message"""
       if (payload_len != 4):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 4.' % (payload_len,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 4.'.format(payload_len))
       piece_index = struct.unpack('>L', data_sio.read(payload_len))[0]
-      self.piecemask.piece_have_set(piece_index, True)
+      self.piecemask.bit_set(piece_index, True)
       self.bth.piece_availability_adjust(piece_index, + 1)
       
       if not (self.s_interest):
@@ -1102,33 +1094,33 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       if (self.sync_done):
          raise BTProtocolError('Got BITFIELD message after first message.')
       
-      if (payload_len != len(self.piecemask.bitfield_get())):
-         raise BTProtocolError('Got BITFIELD message with bogus payload length %d; expected %d.' % (payload_len, len(self.piecemask.bitfield_get())))
+      if (payload_len != len(self.piecemask)):
+         raise BTProtocolError('Got BITFIELD message with bogus payload length {0}; expected {1}.'.format(payload_len, len(self.piecemask)))
 
-      self.log(15, 'Updating bitfield on %r after BITFIELD message.' % (self,))
-      self.piecemask = PieceMask(self.piecemask.length, data_sio.read(payload_len))
+      self.log(15, 'Updating bitfield on {0!a} after BITFIELD message.'.format(self))
+      self.piecemask = BitMask(data_sio.read(payload_len), bitlen=self.piecemask.bitlen)
       self.bth.pieces_availability_adjust_mask(self.piecemask, +1)
    
    def input_process_request(self, data_sio, payload_len):
       """Process REQUEST message"""
       self.peer_req_count += 1
       block_data = (piece_index, block_start, block_length) = struct.unpack('>LLL', data_sio.read(payload_len))
-      self.log2(12, 'Connection %s got request for block p%d, s%d, l%d' % (self, piece_index, block_start, block_length))
+      self.log2(12, 'Connection {0} got request for block p{1}, s{2}, l{3}'.format(self, piece_index, block_start, block_length))
       # Iffy: Without the Fast Extension, should we queue blocks while the peer is being choked?
       if (self.p_choked and self.ext_Fast):
          # When using the Fast Extension, we can just reject the request.
          self.reject_request_send(*block_data)
          return
       
-      if not (self.bth.piecemask.piece_have_get(piece_index)):
-         raise BTProtocolError('Connection %s got request for block p%d, s%d, l%d, the piece of which we do not have completed.' % (self, piece_index, block_start, block_length))
+      if not (self.bth.piecemask.bit_get(piece_index)):
+         raise BTProtocolError('Connection {0} got request for block p{1}, s{2}, l{3}, the piece of which we do not have completed.'.format(self, piece_index, block_start, block_length))
       
       if (block_length > self.request_block_length_max):
-         raise BTProtocolError('Connection %s got request for block p%d, s%d, l%d, the length of which is greater than our maximum block length %d.' % (self, piece_index, block_start, block_length, self.request_block_length_max))
+         raise BTProtocolError('Connection {0} got request for block p{1}, s{2}, l{3}, the length of which is greater than our maximum block length {4}.'.format(self, piece_index, block_start, block_length, self.request_block_length_max))
       
       self.blocks_pending_out.append(block_data)
       if (len(self.blocks_pending_out) > self.blocks_pending_out_limit):
-         raise BTProtocolError('Connection %s has queued %d outgoing blocks, which exceeds our limit of %d. Block list: %r' % (self, len(self.blocks_pending_out), self.blocks_pending_out_limit, self.blocks_pending_out))
+         raise BTProtocolError('Connection {0} has queued {1} outgoing blocks, which exceeds our limit of {2}. Block list: {3!a}'.format(self, len(self.blocks_pending_out), self.blocks_pending_out_limit, self.blocks_pending_out))
       
       if (not (self.p_choked or (self.bth is None))):
          self.bth.block_request_process(self)
@@ -1136,18 +1128,18 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def input_process_piece(self, data_sio, payload_len):
       """Process PIECE message"""
       if not (payload_len >= 8):
-         raise BTProtocolError('Value %d for payload_len invalid; expected it to be >= 8.' % (payload_len,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected it to be >= 8.'.format(payload_len))
          
       (piece_index, start) = struct.unpack('>LL', data_sio.read(8))
       block_length = payload_len - 8
-      self.log2(12, 'Connection %s got block p%d, s%d, l%d' % (self, piece_index, start, block_length))
+      self.log2(12, 'Connection {0} got block p{1}, s{2}, l{3}'.format(self, piece_index, start, block_length))
       
       block_index = start//self.bth.block_length
       block_tuple = (piece_index, block_index)
       
       if not (block_tuple in self.blocks_pending):
          if (self.ext_Fast):
-            raise BTProtocolError('Connection %r got block p%d, s%d, l%d, which I do not remember requesting.' % (self, piece_index, start, block_length))
+            raise BTProtocolError('Connection {0} got block p{1}, s{2}, l{3}, which I do not remember requesting.'.format(self, piece_index, start, block_length))
          else:
             # This can result from a race condition inherent in the Bittorrent
             # Protocol v1.0 without the Fast Extension. Specifically, when
@@ -1160,7 +1152,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
             # one client actually does perform chokes immediately followed by
             # unchokes, and the desync resulting from not taking the race
             # condition into account has been observed in practice.
-            self.log2(19, 'Connection %s got block p%d, s%d, l%d, which I do not remember requesting. Discarding data.' % (self, piece_index, start, block_length))
+            self.log2(19, 'Connection {0} got block p{1}, s{2}, l{3}, which I do not remember requesting. Discarding data.'.format(self, piece_index, start, block_length))
             self.s_snubbed = False
       else:
          self.block_pending_cancel(block_tuple)
@@ -1176,20 +1168,20 @@ class BTClientConnection(SockStreamBinary, MSEBase):
    def input_process_cancel(self, data_sio, payload_len):
       """Process CANCEL message"""
       block_tuple = (piece_index, start, length) = struct.unpack('>LLL', data_sio.read(payload_len))
-      self.log2(12, 'Connection %s got request cancel for block p%d, s%d, l%d' % (self, piece_index, start, length))
-      if (block_tuple in self.blocks_pending_out):
+      self.log2(12, 'Connection {0} got request cancel for block p{1}, s{2}, l{3}'.format(self, piece_index, start, length))
+      try:
          self.blocks_pending_out.remove(block_tuple)
-      else:
+      except ValueError:
          # This can happen as a result of a race condition; i.e. we start
          # sending the block/rejecting the request/choking the peer and the
          # other client cancels it before receiving our response.
-         self.log2(19, 'Connection %s got request cancel for non-outstanding block p%d, s%d, l%d.' % (self, piece_index, start, length))
+         self.log2(19, 'Connection {0} got request cancel for non-outstanding block p{1}, s{2}, l{3}.'.format(self, piece_index, start, length))
    
    # BT Protocol Extension 'Fast Extension' message handlers
    def input_process_suggest_piece(self, data_sio, payload_len):
       """Process SUGGEST PIECE message"""
       piece_index = struct.unpack('>L', data.sio.read(payload_len))[0]
-      if not (self.bth.piecemask.piece_have(piece_index)):
+      if not (self.bth.piecemask.bit_get(piece_index)):
          self.pieces_suggested.add(piece_index)
       
    def input_process_have_all(self, data_sio, payload_len):
@@ -1197,15 +1189,15 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       if not (self.ext_Fast):
          raise BTProtocolExtensionError('Got HAVE ALL message on connection without Fast extensions')
       if (payload_len != 0):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 0.' % (payload_len,))
-      self.piecemask = PieceMask.build_full(len(self.bth.metainfo.piece_hashes))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
+      self.piecemask = BitMask.build_full(len(self.bth.metainfo.piece_hashes))
       
    def input_process_have_none(self, data_sio, payload_len):
       """Process (Fast Extensions) HAVE NONE message"""
       if not (self.ext_Fast):
          raise BTProtocolExtensionError('Got HAVE NONE message on connection without Fast extensions')
       if (payload_len != 0):
-         raise BTProtocolError('Value %d for payload_len invalid; expected 0.' % (payload_len,))
+         raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
       assert (payload_len == 0)
       # The  Fast Extension spec is quite clear on that one of HAVE ALL,
       # HAVE NONE, BITFIELD MUST be sent at the start of the connection if
@@ -1221,15 +1213,15 @@ class BTClientConnection(SockStreamBinary, MSEBase):
       (piece_index, start, length) = struct.unpack('>LLL', data_sio.read(payload_len))
       
       if ((block_index % self.bth.block_length) != 0):
-         raise BTProtocolError('Got bogus REJECT REQUEST message for p%d, s%d, l%d: block start is no integer multiple of our block_length %d.' % (piece_index, start, length, self.bth.block_length))
+         raise BTProtocolError('Got bogus REJECT REQUEST message for p{0}, s{1}, l{2}: block start is no integer multiple of our block_length {3}.'.format(piece_index, start, length, self.bth.block_length))
       
       block_index = start//self.bth.block_length
       block_tuple = (piece_index, block_index)
       
       if not (block_tuple in self.blocks_pending):
-         raise BTProtocolError("Got REJECT REQUEST message for block p%d, s%d, l%d, which I don't remember requesting." % (piece_index, start, length))
+         raise BTProtocolError("Got REJECT REQUEST message for block p{0}, s{1}, l{2}, which I don't remember requesting.".format(piece_index, start, length))
 
-      self.log2(14, '%s processing valid REJECT REQUEST message for block p%d, s%d, l%d.' % (piece_index, start, length))
+      self.log2(14, '{0} processing valid REJECT REQUEST message for block p{1}, s{2}, l{3}.'.format(self, piece_index, start, length))
       self.block_pending_cancel(block_tuple)
       
    def input_process_allowed_fast(self, data_sio, payload_len):
@@ -1238,20 +1230,20 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          raise BTProtocolExtensionError('Got ALLOWED FAST message on connection without Fast extensions')
       
       piece_index = struct.unpack('>L', data_sio.read(payload_len))
-      if not (piece_index < self.piecemask.length):
-         raise BTProtocolError('Got ALLOWED FAST message for bogus piece %d.' % (piece_index,))
+      if not (piece_index < self.piecemask.bitlen):
+         raise BTProtocolError('Got ALLOWED FAST message for bogus piece {0}.'.format(piece_index))
       
-      self.log2(12, '%s processing valid ALLOWED FAST message for piece %d.' % (piece_index,))
+      self.log2(12, '{0} processing valid ALLOWED FAST message for piece {1}.'.format(self, piece_index))
       self.pieces_allowed_fast.add(piece_index)
 
    def close_process(self, fd):
       """Process closing of one of our fds"""
-      if not (self.cleaning_up):
-         self.clean_up()
+      if not (self.closing):
+         self.close()
    
    # standard python operator overloading
    def __repr__(self):
-      return '<%s to %s at %s sent: %d received: %d>' % (
+      return '<{0} to {1} at {2} sent: {3} received: {4}>'.format(
             self.__class__.__name__, self.btpeer, id(self),
             self.content_bytes_out, self.content_bytes_in)
    
@@ -1264,6 +1256,7 @@ class BTClientConnection(SockStreamBinary, MSEBase):
          return -1
       return 0
    
+   #FIXME: port to python 3.0
    def __cmp__(self, other):
       tdcr = self.traffic_delta_cmp(other)
       if (tdcr != 0):
@@ -1300,7 +1293,7 @@ class BTDiskIO:
    """File like object for accessing the set of files targeted by one torrent"""
    logger = logging.getLogger('BTDiskIO')
    log = logger.log
-   hash_helper = sha.sha
+   hash_helper = sha1
    
    def __init__(self, metainfo, basedir, basename_use=True):
       """Initialize instance with metainfo data.
@@ -1319,21 +1312,21 @@ class BTDiskIO:
          basedir_in = basedir
          basedir = os.path.normpath(os.path.join(basedir, metainfo.basename))
          if not (os.path.abspath(basedir).startswith(os.path.abspath(basedir_in))):
-            raise BTClientError("Basename %r retrieved from %s by %s isn't safe to use." % (metainfo.basename, metainfo, self))
+            raise BTClientError("Basename {0!a} retrieved from {1} by {2} isn't safe to use.".format(metainfo.basename, metainfo, self))
       self.basedir = basedir
       
       if not (os.path.exists(basedir)):
-         self.log(12, "Targetdirectory %r doesn't exist; creating it." % (basedir,))
+         self.log(12, "Targetdirectory {0!a} doesn't exist; creating it.".format(basedir))
          os.mkdir(basedir)
       
       files_processed = []
       try:
          for btfile in self.files:
             if (btfile.get_openness()):
-               raise BTCStateError('BTFile %r is already open.')
+               raise BTCStateError('BTFile {0} is already open.'.format(btfile))
             btfile.file_open(basedir)
-            files_processed.append(file)
-      except StandardError:
+            files_processed.append(btfile)
+      except Exception:
          # If something went wrong, don't leave processed files newly opened
          for btfile in files_processed:
             btfile.file_close()
@@ -1345,7 +1338,7 @@ class BTDiskIO:
    def seek(self, index, whence=0):
       """Seek to specified position in torrent content"""
       if not (0 <= whence <= 2):
-         raise ValueError('Value %r for argument whence is invalid.' % (whence,))
+         raise ValueError('Value {0!a} for argument whence is invalid.'.format(whence))
       if (whence == 0):
          self.file_index = 0
       elif (whence == 2):
@@ -1383,16 +1376,17 @@ class BTDiskIO:
          length = self.length - (length * (self.piece_max))
 
       data = self.read(length)
+      print (len(data),length)
       assert (len(data) == length)
       return self.hash_helper(data).digest()
 
    def write(self, data):
       """Write data. This is a thin wrapper around write_fromstream()."""
-      self.write_fromstream(StringIO(data), len(data))
+      self.write_fromstream(BytesIO(data), len(data))
    
    def read(self, length):
-      """Read exactly <length> bytes of data from torrent content and return it as a string"""
-      rv = ''
+      """Read exactly <length> bytes of data from torrent content and return it as a bytearray"""
+      rv = bytearray(length)
       while (length >= 0):
          target = self.files[self.file_index]
          len_read = min(target.length - target.file.tell(), length)
@@ -1400,7 +1394,7 @@ class BTDiskIO:
             data = target.file.read(len_read)
             if (len(data) != len_read):
                raise BTFileError('Reading outside of written domain')
-            rv += data
+            rv[-length:-length + len_read] = data
             length -= len_read
             if (length <= 0):
                break
@@ -1420,7 +1414,7 @@ class BTDiskIO:
          if (len_write > 0):
             data = stream.read(len_write)
             if (len(data) != len_write):
-               raise IOError('Unable to read %d more bytes from stream %r.' % (len_write, stream))
+               raise IOError('Unable to read {0} more bytes from stream {1!a}.'.format(len_write, stream))
             target.file.write(data)
             length -= len_write
             if (length <= 0):
@@ -1491,7 +1485,7 @@ class BTorrentHandler:
       
       self.event_dispatcher = None
       if (announce_key is None):
-         announce_key = sha.sha('%s%s%s' % (time.time(), os.getpid(), random.random())).digest()
+         announce_key = sha1('{0}{1}{2}'.format(time.time(), os.getpid(), random.random()).encode('ascii')).digest()
       self.announce_key = announce_key
 
       self.active = active # are we currently trying to transfer data?
@@ -1558,7 +1552,7 @@ class BTorrentHandler:
    def data_transfers_start(self):
       """Start transferring data"""
       if (self.active):
-         raise BTCStateError('%r is already active.' % (self,))
+         raise BTCStateError('{0} is already active.'.format(self))
       
       self.active = True
       if ((not self.timer_announce) and self.init_done):
@@ -1567,11 +1561,11 @@ class BTorrentHandler:
    def data_transfers_stop(self):
       """Stop transferring data and close all active connections"""
       if (not self.active):
-         raise BTCStateError('%r is already inactive.' % (self,))
+         raise BTCStateError('{0} is already inactive.'.format(self))
       self.active = False
       self.client_announce_tracker(event='stopped', event_force=True)
       for conn in self.peer_connections.copy():
-         conn.clean_up()
+         conn.close()
       
    def state_get(self):
       """Summarize internal state using nested dicts, lists, ints and strings"""
@@ -1589,9 +1583,9 @@ class BTorrentHandler:
       
       self.bt_disk_io = BTDiskIO(self.metainfo, basepath, basename_use=self.basename_use)
       if (self.piecemask):
-         assert(self.piecemask.length) == len(self.metainfo.piece_hashes)
+         assert(self.piecemask.bitlen) == len(self.metainfo.piece_hashes)
       else:
-         self.piecemask = PieceMask(self.piece_count)
+         self.piecemask = BitMask(bitlen=self.piece_count)
 
       self.bandwith_logger_in = self.bli_cls(self.event_dispatcher,
          cycle_length=self.bwm_cycle_length,
@@ -1611,12 +1605,12 @@ class BTorrentHandler:
       self.persistence_timers_set()
       self.init_done = True
    
-   def bl_clean_up(self):
+   def bl_close(self):
       """Stop and forget bandwith loggers and managers"""
       for bl in (self.bandwith_logger_in, self.bandwith_logger_out, self.bandwith_manager_out):
          if (bl is None):
             continue
-         bl.clean_up()
+         bl.close()
       self.bandwith_logger_in = None
       self.bandwith_logger_out = None
       self.bandwith_manager_out = None
@@ -1626,22 +1620,20 @@ class BTorrentHandler:
       for name in self.timer_attributes:
          timer = getattr(self, name)
          if not (timer is None):
-            timer.stop()
+            timer.cancel()
          setattr(self, name, None)
-      
-      self.event_dispatcher.timers_stop_byparent(self)
       
    def io_stop(self):
       """Abort running timers and close files on disk on an inactive bth"""
       if (self.active):
-         raise BTCStateError('%r is currently active' % (self,))
+         raise BTCStateError('{0} is currently active'.format(self))
       
       self.init_done = False
       self.bt_disk_io.close()
       self.bt_disk_io = None
       self.timers_clear()
       
-      self.bl_clean_up()
+      self.bl_close()
    
    def __getstate__(self):
       rv = {}
@@ -1658,24 +1650,24 @@ class BTorrentHandler:
       """Check whether allegedly present data hashes to the correct value"""
       if (index == 0):
          self.bytes_left = self.metainfo.length_total
-         self.log(22, '%s is starting validation of previously downloaded data.' % (self,))
+         self.log(22, '{0} is starting validation of previously downloaded data.'.format(self))
       end_time = time.time() + self.block_time
       
       done = False
-      piece_max = self.piecemask.length - 1
+      piece_max = self.piecemask.bitlen - 1
       
-      while (index < self.piecemask.length):
-         if (self.piecemask.piece_have_get(index)):
+      while (index < self.piecemask.bitlen):
+         if (self.piecemask.bit_get(index)):
             if (self.piecemask_validate):
                try:
                   hd_hash = self.bt_disk_io.piece_hash(index)
                except BTFileError:
-                  self.log(25, 'Piece %s of %s was supposed to be present, but lies outside of written data.' % (index, self))
-                  self.piecemask.piece_have_set(index, False)
+                  self.log(25, 'Piece {0} of {1} was supposed to be present, but lies outside of written data.'.format(index, self))
+                  self.piecemask.bit_set(index, False)
                else:
                   if (self.metainfo.piece_hashes[index] != hd_hash):
-                     self.log(25, 'Piece %s of %s was supposed to be present, but hd content hashed to %r, while expected hash was %r.' % (index, self, hd_hash, self.metainfo.piece_hashes[index]))
-                     self.piecemask.piece_have_set(index, False)
+                     self.log(25, 'Piece {0} of {1} was supposed to be present, but hd content hashed to {2!a}, while expected hash was {3!a}.'.format(index, self, hd_hash, self.metainfo.piece_hashes[index]))
+                     self.piecemask.bit_set(index, False)
                   else:
                      self.pieces_have_count += 1
                      self.bytes_left -= self.metainfo.piece_length
@@ -1691,8 +1683,8 @@ class BTorrentHandler:
          done = True
       
       if (done):
-         self.log(22, '%s has finished validation of previously downloaded data.' % (self,))
-         if ((self.piecemask.length > 0) and self.piecemask.piece_have_get(index - 1)):
+         self.log(22, '{0} has finished validation of previously downloaded data.'.format(self))
+         if ((self.piecemask.bitlen > 0) and self.piecemask.bit_get(index - 1)):
             # Last piece was valid. Correct self.bytes_left back up
             self.bytes_left += (self.metainfo.piece_length - self.piece_length_get(True))
          assert (self.bytes_left >= 0)
@@ -1704,7 +1696,7 @@ class BTorrentHandler:
       else:
          # Hand control back to the main loop for a moment
          self.init_piece_next = index
-         self.timer_init = self.event_dispatcher.Timer(0, self.piecemask_validation_perform, args=(index,), parent=self, persistence=False)
+         self.timer_init = self.event_dispatcher.set_timer(0, self.piecemask_validation_perform, args=(index,), parent=self, persist=False)
       
    def piece_length_get(self, piece_last=False):
       """Return piece_length (in bytes) for this torrent"""
@@ -1714,7 +1706,7 @@ class BTorrentHandler:
    
    def query_piece_wanted(self, index):
       """Return whether piece <index> has any blocks that are neither already downloaded nor currently pending"""
-      if (self.piecemask.piece_have_get(index)):
+      if (self.piecemask.bit_get(index)):
          return False
       
       if (index == (self.piece_count - 1)):
@@ -1731,14 +1723,16 @@ class BTorrentHandler:
    
    def pieces_availability_adjust_mask(self, piecemask, adjustment):
       """Add <adjustment> to the availability metric of every piece in <piecemask>"""
-      mask_bitfield = piecemask.mask
-      mask_bitfield.seek(0)
-      assert (piecemask.length == self.piecemask.length)
-      for i in range(0, self.piecemask.length):
-         if not (i % 8):
-            byteval = ord(mask_bitfield.read(1))
-         if (byteval & (1 << (i % 8))):
-            self.pieces_availability[i] += adjustment
+      assert (piecemask.bitlen == self.piecemask.bitlen)
+      if (self.download_complete):
+         # Who cares?
+         return
+      for i in range(len(piecemask)):
+         byteval = piecemask[i]
+         for j in range(7,-1,-1):
+            k = i*8 + j
+            if (byteval & (1 << k)):
+               self.pieces_availability[k] += adjustment
 
    def piece_availability_adjust(self, index, adjustment=1):
       """Add <adjustment> to the availability of piece with index <index>"""
@@ -1751,8 +1745,8 @@ class BTorrentHandler:
       # finishing mostly complete files.
       
       pieces_classes = {}
-      for index in xrange(len(self.pieces_availability)):
-         if (self.piecemask.piece_have_get(index)):
+      for index in range(len(self.pieces_availability)):
+         if (self.piecemask.bit_get(index)):
             continue
          
          availability = self.pieces_availability[index]
@@ -1763,8 +1757,7 @@ class BTorrentHandler:
       for val in pieces_classes.values():
          random.shuffle(val)
       
-      keys = pieces_classes.keys()
-      keys.sort()
+      keys = sorted(pieces_classes.keys())
       result = []
       for key in keys:
          result.extend(pieces_classes[key])
@@ -1774,15 +1767,15 @@ class BTorrentHandler:
       """Return (at most <count>) pieces we want that are part of <piecemask>"""
       if (self.download_complete):
          # For performance reasons, don't do the whole routine
-         return []
+         return deque()
       
       self.pieces_preference_update() # FIXME: this should probably not be called every time; it's somewhat expensive
 
       pieces_found = 0
-      pieces = []
+      pieces = deque()
       for index in self.pieces_preference:
          if (self.query_piece_wanted(index) and 
-            piecemask.piece_have_get(index)):
+            piecemask.bit_get(index)):
             pieces_found += 1
             pieces.append(index)
             if (pieces_found >= count):
@@ -1797,12 +1790,12 @@ class BTorrentHandler:
          stream: file-like object containing block, and seeked to its beginning"""
       
       if ((start % self.block_length) != 0):
-         raise BTProtocolError("Got block: p%d, s%d, l%d; the start index isn't an integer multiple of block length %d." % (piece_index, start, length, self.block_length))
+         raise BTProtocolError("Got block: p{0}, s{1}, l{2}; the start index isn't an integer multiple of block length {3}.".format(piece_index, start, length, self.block_length))
       
       piece_length = self.piece_length_get(piece_index == (self.piece_count - 1))
       
       if not ((length == self.block_length) or (((piece_length - start) == length) and (length < self.block_length))):
-         raise BTProtocolError("Got block: p%d, s%d, l%d; our standard block length is %d, piece length is %d. The length of the received block is bogus." % (piece_index, start, length, self.block_length, piece_length))
+         raise BTProtocolError("Got block: p{0}, s{1}, l{2}; our standard block length is {3}, piece length is {4}. The length of the received block is bogus.".format(piece_index, start, length, self.block_length, piece_length))
       
       block_index = start//self.block_length
       
@@ -1810,7 +1803,7 @@ class BTorrentHandler:
          if (self.endgame_mode or duplicate_ignore):
             return False
          else:
-            raise BTClientError("I already have piece %d, block %d for connection %s, and am not in endgame mode." % (piece_index, block_index, self))
+            raise BTClientError("I already have piece {0}, block {1} for connection {2}, and am not in endgame mode.".format(piece_index, block_index, self))
       
       self.bt_disk_io.seek(piece_index*self.piece_length_get() + start)
       self.bt_disk_io.write_fromstream(stream, length)
@@ -1823,26 +1816,26 @@ class BTorrentHandler:
          if (di_piece_hash != mi_piece_hash):
             # Unfortunately we don't know which block(s) were bad, so we can't
             # do client banning based on this.
-            self.log(35, 'Piece %d of torrent %s invalid; got data with hash %r, expected %r. Discarding data.' % (piece_index, self, di_piece_hash, mi_piece_hash))
+            self.log(35, 'Piece {0} of torrent {1} invalid; got data with hash {2!a}, expected {3!a}. Discarding data.'.format(piece_index, self, di_piece_hash, mi_piece_hash))
             
             if (piece_index == (self.piece_count - 1)):
-               subrange = xrange(self.blockmask.blocks_per_piece_last)
+               subrange = range(self.blockmask.blocks_per_piece_last)
             else:
-               subrange = xrange(self.blockmask.blocks_per_piece)
+               subrange = range(self.blockmask.blocks_per_piece)
                
             for block_index in subrange:
                self.blockmask.block_have_set(piece_index, block_index, False)
          else:
-            self.log(14, 'Finished piece %d of torrent %s. Hash %r confirmed.' % (piece_index, self, mi_piece_hash))
-            self.piecemask.piece_have_set(piece_index, True)
+            self.log(14, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
+            self.piecemask.bit_set(piece_index, True)
             self.pieces_have_count += 1
             self.bytes_left -= piece_length
             assert (self.bytes_left >= 0)
             for conn in self.peer_connections.copy():
                conn.piece_have_new(piece_index)
             
-            if (self.pieces_have_count == self.piecemask.length):
-               self.log(28, 'Completed torrent %s; %d bytes in %d pieces.' % (self, self.metainfo.length_total, self.piecemask.length))
+            if (self.pieces_have_count == self.piecemask.bitlen):
+               self.log(28, 'Completed torrent {0}; {1} bytes in {2} pieces.'.format(self, self.metainfo.length_total, self.piecemask.bitlen))
                self.download_complete = True
                self.ts_downloading_finish = datetime.datetime.now()
                for conn in self.peer_connections.copy():
@@ -1853,9 +1846,9 @@ class BTorrentHandler:
    def block_request_process(self, conn):
       """Process block request on one of our connections"""
       if (conn.p_choked):
-         raise BTCStateError('BTC %r passed through block request while peer is being choked.')
+         raise BTCStateError('{0!a} received block request while peer is being choked.'.format(conn))
       if (not conn.p_interest):
-         self.log(30, '%r is requesting blocks without having declared interest' % (conn,))
+         self.log(30, '{0} is requesting blocks without having declared interest. Ignoring.'.format(conn))
          return
       if (not conn.uploading):
          self.downloaders_update(discard_optimistic_unchokes=False)
@@ -1870,7 +1863,7 @@ class BTorrentHandler:
       if (not self.active):
          return
       
-      if (self.downloaders == []):
+      if (not self.downloaders):
          return
       
       if not (None is self.downloader_active):
@@ -1977,23 +1970,23 @@ class BTorrentHandler:
       """Set timer for a new announce request in <interval>"""
       if (self.timer_announce):
          try:
-            self.timer_announce.stop()
+            self.timer_announce.cancel()
          except ValueError:
             pass
-      self.timer_announce = self.event_dispatcher.Timer(interval, self.client_announce_tracker, self)
+      self.timer_announce = self.event_dispatcher.set_timer(interval, self.client_announce_tracker, parent=self)
    
    def persistence_timers_set(self):
       """Set persistent timers used by this instance"""
       if (self.timer_peer_connections_start):
-         self.timer_peer_connections_start.stop()
-      self.timer_peer_connections_start = self.event_dispatcher.Timer(self.peer_connections_start_delay, self.peer_connections_start, parent=self, persistence=True)
+         self.timer_peer_connections_start.cancel()
+      self.timer_peer_connections_start = self.event_dispatcher.set_timer(self.peer_connections_start_delay, self.peer_connections_start, parent=self, persist=True)
       if (self.timer_maintenance):
-         self.timer_maintenance.stop()
-      self.timer_maintenance = self.event_dispatcher.Timer(self.maintenance_interval, self.maintenance_perform, parent=self, persistence=True, align=True)
+         self.timer_maintenance.cancel()
+      self.timer_maintenance = self.event_dispatcher.set_timer(self.maintenance_interval, self.maintenance_perform, parent=self, persist=True, align=True)
       
    def maintenance_perform(self):
       """Perform various maintenance tasks"""
-      if (self.piecemask.length - self.pieces_have_count < 10):
+      if (self.piecemask.bitlen - self.pieces_have_count < 10):
          self.endgame_mode = True
       
       for conn in self.peer_connections.copy():
@@ -2008,7 +2001,7 @@ class BTorrentHandler:
       if (not self.active):
          return
       
-      self.log(15, 'BTH %r is starting connect sequence.' % (self,))
+      self.log(15, 'BTH {0} is starting connect sequence.'.format(self))
       peers_connected_count = len(self.peer_connections)
       peers_available_count = len(self.peers_known)
       
@@ -2026,18 +2019,17 @@ class BTorrentHandler:
          if (len(self.peer_connections) >= self.peer_connection_count_target):
             break
          peer = peers_targeted[i]
-         self.log(15, 'BTH %r is opening connection to peer %r.' % (self, peer))
-         conn = BTClientConnection(self.event_dispatcher)
+         self.log(15, 'BTH {0} is opening connection to peer {1!a}.'.format(self, peer))
+         conn = BTClientConnection.peer_connect(self.event_dispatcher,peer.address_get())
          conn.info_hash = self.metainfo.info_hash
          conn.bandwith_logger_in = self.bandwith_logger_in
-         conn.connection_init(peer.address_get())
          self.connection_add(conn)
          conn.handshake_send()
       
    def peer_connection_error_process(self, connection):
       """Process a serious error from a peer we connected (or tried to) to."""
       if (connection.btpeer in self.peers_known):
-         self.log(12, 'Removing peer %r from known list of bth %r as a result of error condition.' % (connection.btpeer, self))
+         self.log(12, 'Removing peer {0!a} from known list of bth {1} as a result of error condition.'.format(connection.btpeer, self))
          self.peers_known.remove(connection.btpeer)
       
    def tracker_conn_response_process(self, tr, data):
@@ -2047,30 +2039,30 @@ class BTorrentHandler:
       an_urls_tier = self.metainfo.announce_urls[self.tier]
       an_url = an_urls_tier[self.tier_index]
       # announce target reordering
-      self.log(10, 'TrackerRequest %r from %r got response; reordering announce urls.' % (tr,an_url))
+      self.log(10, 'TrackerRequest {0} from {1!a} got response; reordering announce urls.'.format(tr,an_url))
       an_urls_tier.remove(an_url)
       an_urls_tier.insert(0, an_url)
       self.tier_index = 0
       self.tracker_valid = True
       
-      self.log(10, 'Processing response %r.' % (data,))
-      if ('min interval' in data):
-         delay_min = int(data['min interval'])
+      self.log(10, 'Processing response {0!a}.'.format(data))
+      if (b'min interval' in data):
+         delay_min = int(data[b'min interval'])
       else:
          delay_min = 0
       
-      if ('tracker id' in data):
-         self.trackerid = data['tracker id']
+      if (b'tracker id' in data):
+         self.trackerid = data[b'tracker id']
       
-      for peer in data['peers']:
+      for peer in data[b'peers']:
          self.peers_known.add(peer)
       
       if (self.interval_override):
          interval = max(self.interval_override, delay_min)
-      elif ('interval' in data):
-         interval = int(data['interval'])
+      elif (b'interval' in data):
+         interval = int(data[b'interval'])
          if (interval < self.announce_min_interval):
-            self.log(30, 'TrackerRequest %r from %r got announce interval %d; bumping it to %d.' % (tr, an_url, interval, self.announce_min_interval))
+            self.log(30, 'TrackerRequest {0} from {1!a} got announce interval {2}; bumping it to {3}.'.format(tr, an_url, interval, self.announce_min_interval))
             interval = self.announce_min_interval
       else:
          interval = self.announce_default_interval
@@ -2105,7 +2097,7 @@ class BTorrentHandler:
          self.tier = 0
          self.tier_index = 0
       
-      self.log(25, 'TrackerRequest %r failed.' % (tr,))
+      self.log(25, 'TrackerRequest {0} failed.'.format(tr))
       if (self.active):
          self.timer_announce_set(self.announce_retry_interval)
       
@@ -2116,16 +2108,16 @@ class BTorrentHandler:
    def client_announce_tracker(self, event=None, event_force=False):
       """Announce ourselves to currently preferred tracker"""
       if (self.tr):
-         self.tr.clean_up()
+         self.tr.close()
       
       if (self.timer_announce):
          try:
-            self.timer_announce.stop()
+            self.timer_announce.cancel()
          except ValueError:
             pass
          self.timer_announce = None
       elif (not event_force):
-         event = 'started'
+         event = b'started'
       
       self.tr = tracker_request_build(self.announce_url_get(), self.metainfo.info_hash,
             self.peer_id, self.port, self.content_bytes_out,
@@ -2137,13 +2129,13 @@ class BTorrentHandler:
    def connection_add(self, conn):
       """Add an open client connection to this handler."""
       if (conn.info_hash != self.metainfo.info_hash):
-         raise InsanityError('Connection passed to %r.connection_add() has info_hash %r, expected %r.' % (self, conn.info_hash, self.metainfo.info_hash))
+         raise InsanityError('Connection passed to {0!a}.connection_add() has info_hash {1!a}, expected {2!a}.'.format(self, conn.info_hash, self.metainfo.info_hash))
       if not (self.init_done):
-         raise HandlerNotReadyError('%r has not finished initialization.' % (self,))
+         raise HandlerNotReadyError('{0} has not finished initialization.'.format(self))
       if (len(self.peer_connections) >= self.peer_connection_count_limit):
-         raise ResourceLimitError('%r is already managing %d connections; my limit is %d.' % (self, len(self.peer_connections), self.peer_connection_count_limit))
+         raise ResourceLimitError('{0} is already managing {1} connections; my limit is {2}.'.format(self, len(self.peer_connections), self.peer_connection_count_limit))
       if (not self.active):
-         raise BTCStateError('%r is not active.' % (self,))
+         raise BTCStateError('{0} is not active.'.format(self))
       
       self.peer_connections.add(conn)
       conn.downloading = (self.init_done and (not self.download_complete))
@@ -2167,7 +2159,7 @@ class BTorrentHandler:
          self.downloader_active = None
          self.chunk_upload()
       
-   def clean_up(self):
+   def close(self):
       if (self.active):
          self.data_transfers_stop()
       self.io_stop()
@@ -2181,9 +2173,10 @@ class BTorrentHandler:
       return None
 
    def __repr__(self):
-      return '<%s id: %s info_hash: %r basefilename: %r active: %s complete: %s>' % (
-            self.__class__.__name__, id(self), self.metainfo.info_hash,
-            self.target_basename_get(), self.active, self.download_complete)
+      return '<{0} id: {1} info_hash: {2!a} basefilename: {3!a} active: {4} ' \
+         'complete: {5}>'.format(self.__class__.__name__, id(self),
+         self.metainfo.info_hash, self.target_basename_get(), self.active,
+         self.download_complete)
 
 
 class BTClient:
@@ -2199,7 +2192,7 @@ class BTClient:
       self.connections_uk = set()
       self.server = None
       self.pickler = None
-      self.timer_pickle_shutdown = None
+      self.el_pickle_shutdown = None
       self.timer_pickle = None
       self.timer_maintenance = None
       self.bandwith_logger_in = None
@@ -2219,8 +2212,7 @@ class BTClient:
    
    def torrent_infohashes_update(self):
       """Update list of torrent infohashes"""
-      self.torrent_infohashes = self.torrents.keys()
-      self.torrent_infohashes.sort()
+      self.torrent_infohashes = sorted(self.torrents.keys())
    
    def state_get(self):
       """Summarize internal state using nested dicts, lists, ints and strings"""
@@ -2237,13 +2229,13 @@ class BTClient:
          cycle_length=self.bwm_cycle_length, 
          history_length=self.bwm_history_length)
       
-      self.server = self.event_dispatcher.SockServer(
-         bindargs=((self.host, self.port),),
-         connect_handler=self.client_connection_handle,
-         connection_factory=BTClientConnection, backlog=self.backlog)
-      self.timer_maintenace = self.event_dispatcher.Timer(
+      self.server = AsyncSockServer(self.event_dispatcher,
+         (self.host, self.port), backlog=self.backlog)
+      self.server.connect_process = self.client_connection_handle
+      
+      self.timer_maintenace = self.event_dispatcher.set_timer(
          self.maintenance_interval, self.maintenance_perform, parent=self,
-         persistence=True)
+         persist=True)
       
       for bth in self.torrents.values():
          if not (bth.init_started):
@@ -2258,11 +2250,11 @@ class BTClient:
    def pickling_shedule(self, pickler):
       """Start pickling to stream at regular intervals and program shutdown"""
       self.pickler = pickler
-      if not (self.timer_pickle_shutdown):
-         self.timer_pickle_shutdown = self.event_dispatcher.Timer(TimerTSShutdown(0), self.pickle_perform, parent=self, ts_relative=False)
+      if not (self.el_pickle_shutdown):
+         self.el_pickle_shutdown = self.event_dispatcher.em_shutdown.new_listener(self.pickle_perform)
       if (self.timer_pickle):
-         self.timer_pickle.stop()
-      self.timer_pickle = self.event_dispatcher.Timer(self.pickle_interval, self.pickle_perform, parent=self, persistence=True)
+         self.timer_pickle.cancel()
+      self.timer_pickle = self.event_dispatcher.set_timer(self.pickle_interval, self.pickle_perform, parent=self, persist=True)
    
    def maintenance_perform(self):
       """Call maintenance_perform() on unknown connections"""
@@ -2273,14 +2265,15 @@ class BTClient:
       """Process closing of a uk connection."""
       self.connections_uk.remove(conn)
    
-   def client_connection_handle(self, connection):
+   def client_connection_handle(self, sock, addrinfo):
       """Handle newly accepted connection on server socket"""
-      self.log(15, 'BTClient %s accepting connection from %s.' % (self, connection.target))
-      connection.handshake_callback = self.client_connection_handle_handshake
-      connection.btpeer = BTPeer(connection.target[0], connection.target[1], None)
-      connection.bandwith_logger_in = self.bandwith_logger_in
-      connection.btc = self
-      self.connections_uk.add(connection)
+      self.log(15, 'BTClient {0} accepting connection from {1}.'.format(self, addrinfo))
+      conn = BTClientConnection(sock)
+      conn.handshake_callback = self.client_connection_handle_handshake
+      conn.btpeer = BTPeer(addrinfo[0], addrinfo[1], None)
+      conn.bandwith_logger_in = self.bandwith_logger_in
+      conn.btc = self
+      self.connections_uk.add(conn)
 
    def client_connection_handle_handshake(self, conn):
       """Handle handshake from connection not yet associated with torrent"""
@@ -2290,16 +2283,16 @@ class BTClient:
          self.torrents[conn.info_hash].connection_add(conn)
 
       else:
-         raise UnknownTorrentError("Not tracking any torrents with info_hash %r." % (conn.info_hash,))
+         raise UnknownTorrentError("Not tracking any torrents with info_hash {0!a}.".format(conn.info_hash))
 
    def torrent_add(self, metainfo, active=True, *bth_args, **bth_kwargs):
       """Instantiate BTorrentHandler and register and return created BTH"""
       if (metainfo.info_hash) in self.torrents:
-         raise DupeError("I'm already tracking torrent %s with same info_hash %r as in specified metainfo." % (self, metainfo.info_hash))
+         raise DupeError("I'm already tracking torrent {0} with same info_hash {1!a} as in specified metainfo.".format(self, metainfo.info_hash))
       bth = BTorrentHandler(metainfo=metainfo, port=self.port, active=active, *bth_args, **bth_kwargs)
       self.torrents[metainfo.info_hash] = bth
       self.torrent_infohashes_update()
-      self.em_bth_add(metainfo.info_hash)
+      self.em_bth_add(self, metainfo.info_hash)
       if not (self.event_dispatcher is None):
          bth.io_start(self.event_dispatcher, self.data_basepath, self.port)
       
@@ -2308,9 +2301,9 @@ class BTClient:
    def torrent_drop(self, info_hash):
       """Drop and return BTH with specified info_hash"""
       if not (info_hash in self.torrents):
-         raise ValueError('Not tracking torrent with info_hash %r.' % (info_hash,))
+         raise ValueError('Not tracking torrent with info_hash {0!a}.'.format(info_hash))
       bth = self.torrents[info_hash]
-      bth.clean_up()
+      bth.close()
       self.bth_archiver.bth_archive(bth)
       self.bt_stats_tracker.bth_process(bth)
       del(self.torrents[info_hash])
@@ -2337,10 +2330,10 @@ class BTClient:
       # listening socket for each of our active torrents.
       for info_hash in self.torrents.keys():
          if (conn.mse_hash2_compute(info_hash) == hash2_val):
-            self.log(14, 'Successfully associated connection %r with info_hash %r based on MSE hashes.' % (conn, info_hash))
+            self.log(14, 'Successfully associated connection {0!a} with info_hash {1!a} based on MSE hashes.'.format(conn, info_hash))
             return info_hash
       
-      raise UnknownTorrentError("Didn't find valid skey for hash2 value %r on BT connection %r." % (hash2_val, conn))
+      raise UnknownTorrentError("Didn't find valid skey for hash2 value {0!a} on BT connection {1!a}.".format(hash2_val, conn))
 
    def pickle_perform(self):
       """Seek picklestream to position 0, and dump a serialization of this
@@ -2361,29 +2354,32 @@ class BTClient:
       self.torrent_infohashes_update()
 
    def __repr__(self):
-      return '<%s listen: (%r,%s) id: %s>' % (self.__class__.__name__, self.host, self.port, id(self))
+      return '<{0} listen: ({1!a},{2}) id: {3}>'.format(self.__class__.__name__, self.host, self.port, id(self))
 
-   def clean_up(self):
-      self.event_dispatcher.timers_stop_byparent(self)
+   def close(self):
       self.event_dispatcher = None
       if (self.server):
-         self.server.clean_up()
+         self.server.close()
       self.server = None
       for conn in self.connections_uk:
-         conn.clean_up()
+         conn.close()
       self.connections_uk = set()
       
       for bth in self.torrents.values():
-         bth.clean_up()
+         bth.close()
       self.torrents = {}
       self.torrent_infohashes_update()
       
-      self.timer_pickle_shutdown = None
+      for timer in (self.timer_pickle, self.timer_maintenance):
+         timer.cancel()
+      
+      self.el_pickle_shutdown.close()
+      self.el_pickle_shutdown = None
       self.timer_pickle = None
       self.timer_maintenance = None
       
-      self.em_bth_add.clean_up()
-      self.em_bth_remove.clean_up()
+      self.em_bth_add.close()
+      self.em_bth_remove.close()
 
 
 class EABTClient(BTClient):
@@ -2396,14 +2392,14 @@ class EABTClient(BTClient):
    def __init__(self, *args, **kwargs):
       BTClient.__init__(self, *args, **kwargs)
       self.__em_throughput = DSEventAggregator(0, parent=self)
-      self.__em_throughput_listener = EventListener(self.__em_throughput,
+      self.__em_throughput_listener = self.__em_throughput.new_listener(
          self.em_throughput_cycle_handle)
       self.em_throughput = EventMultiplexer(self)
    
    def __setstate__(self, *args, **kwargs):
       BTClient.__setstate__(self, *args, **kwargs)
 
-   def em_throughput_cycle_handle(self, listener_agg, listener_orig):
+   def em_throughput_cycle_handle(self):
       """Handle throughput event from self.__em_throughput"""
       if (self.em_throughput.listeners == []):
          # Nobody cares, let's save some cycles
@@ -2451,8 +2447,8 @@ class EABTClient(BTClient):
       #self.__em_throughput.multiplexer_unregister(blo_ec) # ditto
       
    
-   def clean_up(self):
-      self.em_throughput.clean_up()
-      self.__em_throughput.clean_up()
-      BTClient.clean_up(self)
+   def close(self):
+      self.em_throughput.close()
+      self.__em_throughput.close()
+      BTClient.close(self)
 

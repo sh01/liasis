@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -17,35 +17,35 @@
 
 import socket
 
-def socket_args_parse(af_str, addr_str):
+def socket_args_parse(af_str:bytes, addr_str:bytes):
    af = getattr(socket, af_str)
    if (af == socket.AF_UNIX):
-      if (addr_str.count('\x00') > 0):
-         raise ValueError('%r is not a valid filename' % (addr_str,))
+      if (addr_str.count(b'\x00') > 0):
+         raise ValueError('{0!a} is not a valid filename'.format(addr_str))
       return (af, (addr_str,))
    
    if (af == socket.AF_INET):
-      (addr, port_str) = addr_str.split(':')
+      (addr, port_str) = addr_str.split(b':')
       if (not port_str.isdigit()):
          raise ValueError()
       port = int(port_str)
       return (af, (addr, port))
    
    if (af == socket.AF_INET6):
-      port_index = addr_str.rindex(':')
+      port_index = addr_str.rindex(b':')
       port_str = addr_str[port_index+1:]
       
       host_str = addr_str[:port_index]
-      if (not (host_str.startswith('[') and (host_str.endswith(']')))):
+      if (not (host_str.startswith(b'[') and (host_str.endswith(b']')))):
          host = host_str
       else:
          host = host_str[1:-1]
          
       if (not port_str.isdigit()):
-         raise ValueError('Port str %r is invalid.' % (port_str,))
+         raise ValueError('Port str {0!a} is invalid.'.format(port_str))
       
       port = int(port_str[1:])
       return (af, (host, port))
    
-   return ValueError('Unknown address family %r (%r).' % (af_str, af))
+   return ValueError('Unknown address family {0!a} ({1!a}).'.format(af_str, af))
 

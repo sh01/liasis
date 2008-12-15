@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -20,12 +20,15 @@
 THIS IS NOWHERE NEAR A POINT WHERE IT COULD POSSIBLY BEGIN TO WORK.
 """
 
+import socket
 import time
 
-from benc_structures import py_from_benc_str, benc_str_from_py
+from gonium.fdm import AsyncPacketSock
+
+from .benc_structures import py_from_benc_str, benc_str_from_py
 
 
-class DHTError(StandardError):
+class DHTError(Exception):
    pass
 
 
@@ -49,7 +52,7 @@ class DHTNode:
       return (self._answering and ((time.time() - self._ts_activity) >= threshold))
    
    def __repr__(self):
-      return '%s%r' % (self.__class__.__name__, (self.id, self.ip_address, self.port))
+      return '{0}{1}'.format(self.__class__.__name__, (self.id, self.ip_address, self.port))
 
 
 class DHTNodeTable:
@@ -79,21 +82,23 @@ class DHTNodeTable:
       """Add node to table"""
       bucket = self.bucket_get_id(node.id)
       if (len(bucket) >= self.bucket_size_max):
-         raise DHTError('Bucket size limit %d in bucket for node %r exceeded.' % (self.bucket_size_max, node))
+         raise DHTError('Bucket size limit {0} in bucket for node {1!a} exceeded.'.format(self.bucket_size_max, node))
       
       bucket.append(node)
 
 
 class DHTNodeManager:
    """Class for DHT socket management and request sending"""
-   def __init__(self, id_, event_dispatcher, bind_target):
+   def __init__(self, id_, event_dispatcher, sock_address, sock_af=socketAF_INET):
       self.id = id_
       self.node_table = DHTNodeTable(id_)
       self._ed = event_dispatcher
-      self._sock = self._ed.SockDatagram(input_handler=self.sock_input_handle)
-      self._sock.connection_init(bind_target=bind_target)
+      sock = socket.socket(sock_af, socket.SOCK_DGRAM)
+      sock.bind(sock_address)
+      self._sock = AsyncPacketSock(self._ed, sock)
+      self._sock.process_input = self._sock_input_handle
    
-   def _sock_input_handle(self, source, data):
+   def _sock_input_handle(self, data, addrinfo):
       """Process input from our UDP socket"""
       #FIXME!
 

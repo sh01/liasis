@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -19,23 +19,30 @@
 
 from socket import AF_UNIX
 
-from liasis.bt_archiving import BTHPickleDirectoryArchiver
+from .bt_archiving import BTHPickleDirectoryArchiver
 
 class ConfigBase:
+   _bytes_attributes = ()
    def config_use(self, target):
+      for attr in self._bytes_attributes:
+         val = getattr(self, attr)
+         if (isinstance(val, (bytes, bytearray))):
+            continue
+         setattr(self, attr, val.encode())
+      
       for key in self.attributes:
          setattr(target, key, getattr(self, key))
 
 
 class DaemonConfig(ConfigBase):
    """Global Liasis config value storage class"""
-   pickle_filename = 'liasis_state.pickle'
+   pickle_filename = b'liasis_state.pickle'
 
 
 class BTMConfig(ConfigBase):
    """BTManager config value storage class"""
    control_socket_af = AF_UNIX
-   control_socket_bindargs = ('liasis_ctl.sock',)
+   control_socket_address = b'liasis_ctl.sock'
 
 
 class BTCConfig(ConfigBase):
@@ -43,10 +50,12 @@ class BTCConfig(ConfigBase):
    attributes = ('host', 'port', 'pickle_interval', 'backlog', 
       'bwm_cycle_length', 'bwm_history_length')
    
+   _bytes_attributes = ('bth_archive_basepath', 'host', 'data_basepath')
+   
    # default config values
-   bth_archive_basepath = 'torrent_archive'
+   bth_archive_basepath = b'torrent_archive'
    bth_archiver_cls = BTHPickleDirectoryArchiver
-   data_basepath = 'data'
+   data_basepath = b'data'
    port = 10000
    host = ''
    pickle_interval = 100
@@ -57,5 +66,4 @@ class BTCConfig(ConfigBase):
    def config_use(self, target):
       ConfigBase.config_use(self, target)
       target.bth_archiver = self.bth_archiver_cls(self.bth_archive_basepath)
-
 

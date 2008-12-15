@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -21,22 +21,24 @@
 # <http://wiki.theory.org/BitTorrentSpecification>
 
 import logging
-import httplib
-import urllib
-import urllib2
+import http.client
+import random
 import socket
 import struct
-import random
+import urllib.request
+from urllib.parse import quote
 
-from gonium import http_hacks
-from benc_structures import py_from_benc_str, BTPeer
-from url_parsing import HTTPLikeURL
+from gonium.hacks.asynchttpc import build_async_opener
+from gonium.fdm import AsyncDataStream, AsyncPacketSock
+
+from .benc_structures import py_from_benc_str, BTPeer
+from .url_parsing import HTTPLikeURL
 
 
-class TrackerRequestError(StandardError):
+class TrackerRequestError(Exception):
    pass
 
-class TrackerResponseError(StandardError):
+class TrackerResponseError(Exception):
    pass
 
 
@@ -60,13 +62,15 @@ class TrackerRequest:
 
 
 class HTTPTrackerRequest(TrackerRequest):
-   proto = 'http'
+   proto = b'http'
    def __init__(self, *args, **kwargs):
       TrackerRequest.__init__(self, *args, **kwargs)
       self.connection = None
+      self.od = build_async_opener()
       self.result_callback = None
       self.error_callback = None
       self.clean_up_active = False
+      self.data = None
    
    def req_url_get(self):
       rlist = []
@@ -76,90 +80,98 @@ class HTTPTrackerRequest(TrackerRequest):
             continue
          if (isinstance(val,bool)):
             val = int(val)
-         rlist.append('%s=%s' % (field, urllib.quote(str(val), safe='')))
+         if not (isinstance(val, (bytes, bytearray, str))):
+            val = str(val)
+         
+         rlist.append('='.join((field, quote(val, safe=b''))))
       
-      return '%s?%s' % (self.announce_url, '&'.join(rlist))
+      return '?'.join((self.announce_url.decode('ascii'), '&'.join(rlist)))
 
    def request_build(self):
       # There's at least one tracker which doesn't seem to like
       # Python-urllib-2.4 UA strings. Besides, this is more informative.
-      ul_req = urllib2.Request(self.req_url_get(), None, {'User-Agent':'Liasis'})
-      (got_exc, hcd) = http_hacks.HTTPConnection.call_wrap(urllib2.urlopen, (ul_req,), {}, ())
+      ul_req = urllib.request.Request(self.req_url_get(), None, {'User-Agent':'Liasis'})
+      (got_exc, hcd) = self.od.open(ul_req, responses=())
       
       if not (got_exc):
-         raise TrackerRequestError("Httplib hack failed.")
+         raise TrackerRequestError("http.client hack failed.")
       
       return hcd.req_string
 
-   def conn_input_handle(self):
-      pass
+   def conn_input_handle(self, data):
+      self.data = data
 
-   def conn_close_handle(self, fd):
+   def conn_close_handle(self):
       """Handle closing of fd from our http connection: process data and pass result to callback"""
       if (self.clean_up_active):
          # Nothing to see here. Result is almost certainly incomplete
          return
+      response_http = self.data
+      if (response_http is None):
+         self.log(30, 'Tracker request to {0!a} failed; received no data.'.format(self.announce_url), exc_info=False)
+         self.error_callback(self)
+         return
       try:
-         response_http = self.connection.buffers_input[fd]
-         (got_exc, urlo) = http_hacks.HTTPConnection.call_wrap(urllib2.urlopen, (self.announce_url,), {}, (response_http,))
+         (got_exc, urlo) = self.od.open(self.req_url_get(), responses=(bytes(response_http),))
          
          if (got_exc):
-            raise TrackerResponseError('HTTP parsing failed; got followup request: %r' % (urlo,))
+            raise TrackerResponseError('HTTP parsing failed; got followup request: {0!a}'.format(urlo,))
          
          response_text = urlo.read()
          response_data = py_from_benc_str(response_text)
          
-         if ('failure reason' in response_data):
-            fr = response_data['failure reason']
-            self.log(30, 'Got failure reason %r from tracker %r.' % (fr, self.announce_url))
-            raise TrackerResponseError('Tracker %r returned failure reason %r. Complete response data: %r' % (self.announce_url, fr, response_data))
-         if ('warning message' in response_data):
-            wm = response_data['warning message']
-            self.log(30, 'Got warning message %r from tracker %r.' % (fr, self.announce_url))
+         if (b'failure reason' in response_data):
+            fr = response_data[b'failure reason']
+            self.log(30, 'Got failure reason {0!a} from tracker {1!a}.'.format(fr, self.announce_url))
+            raise TrackerResponseError('Tracker {0!a} returned failure reason {1!a}. Complete response data: {2!a}'.format(self.announce_url, fr, response_data))
+         if (b'warning message' in response_data):
+            wm = response_data[b'warning message']
+            self.log(30, 'Got warning message {0!a} from tracker {1!a}.'.format(fr, self.announce_url))
          
          # FIXME: According to wiki.theory.org, 'peer id' entries from the tuples
          # can also be hostnames. This hasn't been observed in practice, but we
          # should catch it here and do some kind of asynchronous lookup if they are.
-         response_data['peers'] = BTPeer.seq_build(response_data['peers'])
-      except (StandardError, httplib.HTTPException), exc:
+         response_data[b'peers'] = BTPeer.seq_build(response_data[b'peers'])
+      except (Exception, http.client.HTTPException) as exc:
          self.error_callback(self)
-         self.log(30, 'Tracker request to %r failed. Resultstring: %r. Error: %r (%r)' % (self.announce_url, response_http, exc, str(exc)), exc_info=False)
+         self.log(30, 'Tracker request to {0!a} failed. Resultstring: {1!a}. Error: {2!a} ({3!a})'.format(self.announce_url, bytes(response_http), exc, str(exc)), exc_info=False)
       else:
          self.result_callback(self, response_data)
-         self.clean_up()
+         self.close()
    
    def request_send(self, event_dispatcher, result_callback, error_callback):
       """Open connection to announce url, open and send request"""
       if not (self.connection is None):
-         raise TrackerRequestError("Request %r is still pending." % self.connection)
-      
-      self.connection = event_dispatcher.SockStreamBinary()
-      self.connection.input_handler = self.conn_input_handle
-      self.connection.close_handler = self.conn_close_handle
-      self.result_callback = result_callback
-      self.error_callback = error_callback
+         raise TrackerRequestError("Request {0!a} is still pending.".format(self.connection))
       
       try:
          request_string = self.request_build()
-      except urllib2.URLError:
-         self.log(30, 'Error building request for %r:' % (self.req_url_get(),), exc_info=True)
+      except urllib.request.URLError:
+         self.log(30, 'Error building request for {0!a}:'.format(self.req_url_get()), exc_info=True)
          error_callback(self)
          return
       
       try:
-         self.connection.connection_init(self.address_get(default_port=80))
+         self.connection = AsyncDataStream.build_sock_connect(event_dispatcher,
+            self.address_get(default_port=80))
       except socket.error:
          self.connection = None
          self.result_callback = None
          self.error_callback = None
          error_callback(self)
-      else:
-         self.connection.send_data(request_string)
+         return
+      
+      self.connection.process_input = self.conn_input_handle
+      self.connection.process_close = self.conn_close_handle
+      self.result_callback = result_callback
+      self.error_callback = error_callback
+      
+      self.connection.send_bytes((request_string,))
 
-   def clean_up(self):
+   def close(self):
       self.clean_up_active = True
       if (self.connection):
-         self.connection.clean_up()
+         self.connection.close()
       self.connection = None
       self.callback_handler = None
       self.clean_up_active = False
@@ -193,7 +205,7 @@ class UDPTrackerRequest(TrackerRequest):
       TrackerRequest.__init__(self, *args, **kwargs)
       self.sock = None
       self.timeout_timer = None
-      self.clean_up()
+      self.close()
    
    @staticmethod
    def tid_generate():
@@ -230,23 +242,23 @@ class UDPTrackerRequest(TrackerRequest):
    def frame_parsebody_init(data):
       """Parse init response fragment (packet minus initial 8 bytes) and return contents"""
       if (len(data) != 8):
-         raise ValueError('Data %r invalid; expected exactly 8 bytes.' % (data,))
+         raise ValueError('Data {0!a} invalid; expected exactly 8 bytes.'.format(data,))
       return struct.unpack('>q', data)[0]
     
    @staticmethod
    def frame_parsebody_announce(data):
       """Parse announce response body (packet minus initial 8 bytes) and return contents"""
       if (len(data) < 12):
-         raise ValueError('Data %r invalid; expected at least 12 bytes.' % (data,))
+         raise ValueError('Data {0!a} invalid; expected at least 12 bytes.'.format(data,))
       if (((len(data) - 12) % 6) != 0):
-         raise ValueError('Data %r invalid; length %d does not satisfy (((l - 12) % 6) == 0) condition.' % (data, len(data)))
+         raise ValueError('Data {0!a} invalid; length {1} does not satisfy (((l - 12) % 6) == 0) condition.'.format(data, len(data)))
       
       (interval, seeders, leechers) = struct.unpack('>lll', data[:12])
       peers = BTPeer.seq_build(data[12:])
        
       for peer in peers:
          if ((int(peer.ip) == 0) or (peer.port == 0)):
-            raise ValueError('Invalid BTPeer data %r.' % (peer,))
+            raise ValueError('Invalid BTPeer data {0!a}.'.format(peer,))
        
       # Build response data manually, since it doesn't exist at protocol level
       response_data = {
@@ -259,15 +271,15 @@ class UDPTrackerRequest(TrackerRequest):
    
    def timeout_handle(self):
       """Handle session timeout."""
-      self.log(30, '%r (tracker %r) timeouted in state %r.' % (self, self.announce_url, self.state))
+      self.log(30, '{0!a} (tracker {1!a}) timeouted in state {2!a}.'.format(self, self.announce_url, self.state))
       self.timeout_timer = None
-      self.error_callback(TrackerResponseError('Session to tracker %r timeouted in state %r.' % (self.announce_url, self.state)))
-      self.clean_up()
+      self.error_callback(TrackerResponseError('Session to tracker {0!a} timeouted in state {1!a}.'.format(self.announce_url, self.state)))
+      self.close()
        
    def frame_process_init(self, data):
       """Process init response"""
       if (self.state != 0):
-         raise TrackerResponseError('%r.frame_process_init(%r) got called while state == %r.' % (self, data, self.state))
+         raise TrackerResponseError('{0!a}.frame_process_init({1!a}) got called while state == {2!a}.'.format(self, data, self.state))
       self.connection_id = self.frame_parsebody_init(data)
       self.transaction_id = self.tid_generate()
       self.state = 1
@@ -276,17 +288,17 @@ class UDPTrackerRequest(TrackerRequest):
    def frame_process_announce(self, data):
       """Process announce response"""
       if (self.state != 1):
-         raise TrackerResponseError('%r.frame_process_announce(%r) got called while state == %r.' % (self, data, self.state))
+         raise TrackerResponseError('{0!a}.frame_process_announce({1!a}) got called while state == {2!a}.'.format(self, data, self.state))
        
       response_data = self.frame_parsebody_announce(data)
       self.result_callback(self, response_data)
-      self.clean_up()
+      self.close()
     
    def frame_process_error(self, data):
       """Process error response"""
-      self.log(30, '%r got error %r from tracker.' % (self, data))
-      self.error_callback(TrackerResponseError('Tracker %r returned failure reason %r.' % (self.announce_url, data)))
-      self.clean_up()
+      self.log(30, '{0!a} got error {1!a} from tracker.'.format(self, data))
+      self.error_callback(TrackerResponseError('Tracker {0!a} returned failure reason {1!a}.'.format(self.announce_url, data)))
+      self.close()
     
    FRAME_HANDLERS = {
       ACTION_CONNECT:frame_process_init,
@@ -298,32 +310,32 @@ class UDPTrackerRequest(TrackerRequest):
       """Process UDP frame received from tracker"""
       if (source != self.tracker_address):
          # Not what we're expecting.
-         self.log(30, '%r got unexpected udp frame %r from %r. Discarding.' % (self, data, source))
+         self.log(30, '{0!a} got unexpected udp frame {1!a} from {2!a}. Discarding.'.format(self, data, source))
          return
        
       if (len(data) < 8):
-         raise ValueError('data %r invalid; expected at least 8 bytes.' % (data,))
+         raise ValueError('data {0!a} invalid; expected at least 8 bytes.'.format(data,))
       
       (action, tid) = struct.unpack('>ll', data[:8])
        
       if (tid != self.transaction_id):
          # Not what we're expecting.
-         self.log(30, '%r got unexpected tid %r; expected %r. Discarding frame.' % (self, tid, self.transaction_id))
+         self.log(30, '{0!a} got unexpected tid {1!a}; expected {2!a}. Discarding frame.'.format(self, tid, self.transaction_id))
          return
 
       if (action in self.FRAME_HANDLERS):
          self.FRAME_HANDLERS[action](self, data[8:])
       else:
-         self.log(30, '%r for frame with unknown action %r. Discarding frame.' % (self, action))
+         self.log(30, '{0!a} for frame with unknown action {1!a}. Discarding frame.'.format(self, action))
     
    def frame_send(self, data):
       """Send frame to tracker"""
-      self.sock.send_data(data, self.tracker_address)
+      self.sock.send_bytes((data,), self.tracker_address)
     
    def request_send(self, event_dispatcher, result_callback, error_callback):
       """Initiate announce sequence"""
       if not (self.state is None):
-         raise TrackerRequestError("Request %r is still pending." % self.sock)
+         raise TrackerRequestError("Request {0!a} is still pending.".format(self.sock))
       
       self.result_callback = result_callback
       self.error_callback = error_callback
@@ -337,15 +349,15 @@ class UDPTrackerRequest(TrackerRequest):
        
       self.frame_send(self.frame_build_init())
       
-      self.timeout_timer = event_dispatcher.Timer(self.TIMEOUT, self.timeout_handle)
+      self.timeout_timer = event_dispatcher.set_timer(self.TIMEOUT, self.timeout_handle)
     
-   def clean_up(self):
+   def close(self):
       """Close socket, if opened, and reset state variables"""
       if not (self.sock is None):
-         self.sock.clean_up()
+         self.sock.close()
          self.sock = None
       if not (self.timeout_timer is None):
-         self.timeout_timer.stop()
+         self.timeout_timer.cancel()
          self.timeout_timer = None
       self.connection_id = None
       self.state = None
@@ -366,7 +378,7 @@ def tracker_request_build(announce_url, *args, **kwargs):
    try:
       cls = _request_types[proto]
    except KeyError:
-      raise ValueError('Unknown proto %r in announce URL %r.' % (proto, announce_url))
+      raise ValueError('Unknown proto {0!a} in announce URL {1!a}.'.format(proto, announce_url))
    
    return cls(announce_url, *args, **kwargs)
 

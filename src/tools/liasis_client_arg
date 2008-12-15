@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -22,7 +22,7 @@ import optparse
 import time
 import logging
 
-from gonium.fd_management import EventDispatcherPoll as EventDispatcher
+from gonium.fdm import ED_get
 
 from liasis.cc_client import BTControlConnectionClientGonium, ThroughputCounter
 
@@ -35,16 +35,17 @@ def bandwith_avg(data):
 
 
 class btccs(BTControlConnectionClientGonium):
-   conn_fmtstr = '%15s %5s %10s %10s %10s  %s %s  %s %s  %s  %5s  %5s %5s, %s'
-   def __init__(self, event_dispatcher, terminate_after_sync, td_print_delay=None):
-      BTControlConnectionClientGonium.__init__(self, event_dispatcher)
+   conn_fmtstr = '{0:15} {1:5} {2:10} {3:10} {4:10}  {5} {6}  {7} {8}  {9}  {10:5}  {11:5} {12:5}, {13}'
+   def __init__(self, ed, *args, terminate_after_sync, td_print_delay=None, **kwargs):
+      BTControlConnectionClientGonium.__init__(self, ed, *args, **kwargs)
+      self.ed = ed
       self.tas = terminate_after_sync
-      self.em_utd_change_true.EventListener(self.utd_change_true_process)
+      self.em_utd_change_true.new_listener(self.utd_change_true_process)
       self.td_print_delay = td_print_delay
       self.tbel = None
       
       if (not (td_print_delay is None)):
-         self.td_print_timer = event_dispatcher.Timer(self.td_print_delay, self.td_print, persistence=True)
+         self.td_print_timer = ed.set_timer(self.td_print_delay, self.td_print, persist=True)
       else:
          self.td_print_timer = None
       
@@ -52,19 +53,19 @@ class btccs(BTControlConnectionClientGonium):
       """Process COMMANDNOOP message"""
       BTControlConnectionClientGonium.input_process_COMMANDNOOP(self, cmd, args)
       if ((self.td_print_timer is None) and (self.messages_pending == [])):
-         print 'Sucessfully executed NOOP %r.' % (args,)
-         self.event_dispatcher.shutdown_start()
+         print('Sucessfully executed NOOP {0}.'.format(args))
+         self.ed.shutdown()
 
    def input_process_COMMANDOK(self, cmd, args):
       """Process COMMANDOK message"""
       BTControlConnectionClientGonium.input_process_COMMANDOK(self, cmd, args)
       if ((self.td_print_timer is None) and (self.messages_pending == [])):
-         print 'Sucessfully executed %r.' % (args,)
-         self.event_dispatcher.shutdown_start()
+         print('Sucessfully executed {0}.'.format(args))
+         self.ed.shutdown()
 
    def input_process_PROTOERROR(self, cmd, args):
       """Process protocol error message"""
-      self.event_dispatcher.shutdown_start()
+      self.ed.shutdown()
       BTControlConnectionClientGonium.input_process_PROTOERROR(self, cmd, args)
 
    @staticmethod
@@ -75,15 +76,15 @@ class btccs(BTControlConnectionClientGonium):
    
    @classmethod
    def conn_header_print(cls):
-      print cls.conn_fmtstr % ('ip','port','peer id', 'bytes out', 'bytes in', 's_interest', 's_choked', 'p_interest', 'p_choked', 'mse_cm', 'pieces_completed', 'block req count', 'start', 'peer id start')
+      print(cls.conn_fmtstr.format('ip','port','peer id', 'bytes out', 'bytes in', 's_interest', 's_choked', 'p_interest', 'p_choked', 'mse_cm', 'pieces_completed', 'block req count', 'start', 'peer id start'))
       
    def throughput_block_process_out(self, listener, client_idx, info_hash, *args, **kwargs):
-      if ('GETBTHTHROUGHPUT' in [e[0] for e in self.messages_pending]):
+      if (b'GETBTHTHROUGHPUT' in [e[0] for e in self.messages_pending]):
          # We haven't received data for all of the infohashes yet
          return
       
       if not (self.tbel is None):
-         self.tbel.clean_up()
+         self.tbel.close()
          self.tbel = None
       self.td_print()
       
@@ -95,7 +96,7 @@ class btccs(BTControlConnectionClientGonium):
          for bth in btc.torrents.values():
             if not (bth.active):
                continue
-            print '%s: Bandwith usage for %r:' % (self.dts_fmt(), bth.target_basename_get(),)
+            print('{0}: Bandwith usage for {1!a}:'.format(self.dts_fmt(), bth.target_basename_get()))
             avg_in_10 = (bandwith_avg(bth.bandwith_logger_in[-10:]) or 0)/1024
             avg_in_100 = (bandwith_avg(bth.bandwith_logger_in[-100:]) or 0)/1024
             avg_in_1000 = (bandwith_avg(bth.bandwith_logger_in[-1000:]) or 0)/1024
@@ -104,16 +105,16 @@ class btccs(BTControlConnectionClientGonium):
             avg_out_100 = (bandwith_avg(bth.bandwith_logger_out[-100:]) or 0)/1024
             avg_out_1000 = (bandwith_avg(bth.bandwith_logger_out[-1000:]) or 0)/1024
       
-            print '\tout(summary): %.2f kb/s (10) %.2f kb/s (100) %.2f kb/s (1000)' % (avg_out_10, avg_out_100, avg_out_1000)
-            print '\tin(summary): %.2f kb/s (10) %.2f kb/s (100) %.2f kb/s (1000)' % (avg_in_10, avg_in_100, avg_in_1000)
+            print('\tout(summary): {0:.2} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_out_10, avg_out_100, avg_out_1000))
+            print('\tin(summary): {0:.2} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_in_10, avg_in_100, avg_in_1000))
 
-         print ''
+         print('')
       
    def throughput_data_request(self):
       for client_idx in range(len(self.bt_clients)):
          for info_hash in self.bt_clients[client_idx].torrents.keys():
             if (self.bt_clients[client_idx].torrents[info_hash].active):
-               self.msg_send('GETBTHTHROUGHPUT', [client_idx, info_hash, 1000])
+               self.msg_send(b'GETBTHTHROUGHPUT', [client_idx, info_hash, 1000])
       
    @classmethod
    def conn_print(cls, conn):
@@ -124,16 +125,16 @@ class btccs(BTControlConnectionClientGonium):
          mse_cm_out = conn.mse_cm
       # pieces have count
       if not (conn.piecemask is None):
-         phc = conn.piecemask.pieces_have_count()
+         phc = conn.piecemask.bits_set_count()
       else:
          phc = '-'
       
       if (conn.peer_id is None):
          client_id = None
       else:
-         client_id = repr(conn.peer_id[:8])
+         client_id = ascii(conn.peer_id[:8])
       
-      print cls.conn_fmtstr % (
+      print(cls.conn_fmtstr.format(
             conn.btpeer.ip,
             conn.btpeer.port,
             conn.btpeer.peer_id,
@@ -149,34 +150,35 @@ class btccs(BTControlConnectionClientGonium):
             time.strftime('%H:%M', time.localtime(conn.ts_start)),
             client_id
             )
-      
-   def utd_change_true_process(self, listener):
+         )
+   
+   def utd_change_true_process(self):
       for client in self.bt_clients:
-         print '---------- BT Client: %s' % (client,)
-         print '----- uk connections (%d):' % (len(client.connections_uk),)
+         print('---------- BT Client: {0}'.format(client))
+         print('----- uk connections ({0}):'.format(len(client.connections_uk)))
          self.conn_header_print()
          for conn in client.connections_uk:
             self.conn_print(conn)
                
          for bth in client.torrents.values():
-            print '----- BT Handler: Basename: %r IH: %s active: %d' % (bth.target_basename_get(), binascii.b2a_hex(bth.metainfo.info_hash), bth.active)
-            print 'peer id: %r pending blocks: %d' % (bth.peer_id, bth.blockmask_req.pieces_have_count())
-            print 'total transfers: down: %.2fMb up: %.2fMb' % (bth.content_bytes_in/1024.0**2, bth.content_bytes_out/1024.0**2)
-            print 'download progress: %d / %d pieces (%.4f %%)' % (bth.pieces_have_count, bth.piece_count, (100.0*bth.pieces_have_count)/bth.piece_count)
-            print '-- connections (%d):' % (len(bth.peer_connections),)
+            print('----- BT Handler: Basename: {0!a} IH: {1} active: {2}'.format(bth.target_basename_get(), binascii.b2a_hex(bth.metainfo.info_hash), bth.active))
+            print('peer id: {0!a} pending blocks: {1}'.format(bth.peer_id, bth.blockmask_req.bits_set_count()))
+            print('total transfers: down: {0:.2f}Mb up: {1:.2f}Mb'.format(bth.content_bytes_in/1024.0**2, bth.content_bytes_out/1024.0**2))
+            print('download progress: {0} / {1} pieces ({2:.4f} %)'.format(bth.pieces_have_count, bth.piece_count, (100.0*bth.pieces_have_count)/bth.piece_count))
+            print('-- connections ({0}):'.format(len(bth.peer_connections)))
             self.conn_header_print()
             for conn in bth.peer_connections:
                self.conn_print(conn)
          
       if (self.tas):
-         self.event_dispatcher.shutdown_start()
+         self.ed.shutdown()
 
 
 class tcbtccs(btccs, ThroughputCounter):
    def __init__(self, *args, **kwargs):
       btccs.__init__(self, *args, **kwargs)
       ThroughputCounter.__init__(self)
-      self.tbel = self.em_throughput_block.EventListener(self.throughput_block_process_out)
+      self.tbel = self.em_throughput_block.new_listener(self.throughput_block_process_out)
 
 
 if (__name__ == '__main__'):
@@ -190,7 +192,7 @@ if (__name__ == '__main__'):
    handler_stderr.setFormatter(formatter)
    logger.addHandler(handler_stderr)
    
-   event_dispatcher = EventDispatcher()
+   event_dispatcher = ED_get()()
    
    # option parsing
    op = optparse.OptionParser()
@@ -208,11 +210,11 @@ if (__name__ == '__main__'):
    data_get = ((options.bth_start is options.bth_stop is options.mi_new is options.bth_drop is None) and (options.fbr is False))
    
    if (data_get):
-      cc = event_dispatcher.tcbtccs(False, 10)
+      cc = tcbtccs.build_sock_connect(event_dispatcher, socket_path,
+         family=socket.AF_UNIX, terminate_after_sync=False, td_print_delay=10)
    else:
-      cc = event_dispatcher.btccs(False, None)
-   cc.connection_init(socket_path, address_family=socket.AF_UNIX)
-   
+      cc = btccs.build_sock_connect(event_dispatcher, socket_path,
+         family=socket.AF_UNIX, terminate_after_sync=False)
    
    if (not (options.bth_start is None)):
       ih = binascii.a2b_hex(options.bth_start)
@@ -227,7 +229,7 @@ if (__name__ == '__main__'):
    if (not (options.fbr is False)):
       cc.btc_reannounce_force(options.client_idx)
    if (not (options.mi_new is None)):
-      mi_str = file(options.mi_new).read()
+      mi_str = open(options.mi_new,'rb').read()
       cc.bth_add_from_metainfo(options.client_idx, mi_str, True)
 
    

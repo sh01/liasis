@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007 Sebastian Hagen
+#Copyright 2007,2008 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -19,7 +19,7 @@
 
 from gonium.event_multiplexing import EventMultiplexer
 
-class BandwithError(StandardError):
+class BandwithError(Exception):
    pass
 
 class BandwithRequest:
@@ -31,6 +31,19 @@ class BandwithRequest:
       self.priority = priority
       self.parent = parent
       self.request_ts = time.time()
+   
+   def __eq__(self, other):
+      return self.__cmp__(other) == 0
+   def __ne__(self, other):
+      return self.__cmp__(other) != 0
+   def __lt__(self, other):
+      return self.__cmp__(other) == -1
+   def __le__(self, other):
+      return self.__cmp__(other) <= 0
+   def __gt__(self, other):
+      return self.__cmp__(other) == 1
+   def __ge__(self, other):
+      return self.__cmp__(other) >= 0
    
    def __cmp__(self, other):
       if (self.priority != other.priority):
@@ -61,7 +74,7 @@ class BandwithRequest:
       
       if (self is other):
          return 0
-      raise StandardError('%r and %r are incomparable' % (self, other))
+      raise Exception('{0!a} and {1!a} are incomparable'.format(self, other))
 
    def __hash__(self):
       return id(self)
@@ -78,7 +91,7 @@ class BandwithRequest:
    cancel = unregister
 
    def __repr__(self):
-      '%s(%r,%r,%r,%r)' % (self.__class__.__name__, self.bytes, self.bytes_min, self.callback, self.priority)
+      '{0}({1!a},{2!a},{3!a},{4!a})'.format(self.__class__.__name__, self.bytes, self.bytes_min, self.callback, self.priority)
 
 
 class RingBuffer(object):
@@ -107,10 +120,8 @@ class BandwithLoggerBase(RingBuffer):
       
    Event multiplexers:
    em_cycle:
-      handler args: listener
       triggers: At beginning of each new cycle (slice)
-   em_cleanup:
-      handler args: listener
+   em_close:
       triggers: At instance clean_up
    """
    bandwith_loggers = set()
@@ -127,15 +138,15 @@ class BandwithLoggerBase(RingBuffer):
 
       # event multiplexers
       self_bl.em_cycle = EventMultiplexer(self_bl)
-      self_bl.em_cleanup = EventMultiplexer(self_bl)
+      self_bl.em_close = EventMultiplexer(self_bl)
 
       # long-term data
       self_bl.request_cls = PriorityBandwithLimiter_BandwithRequest
       self_bl.event_dispatcher = event_dispatcher
       self_bl.cycle_length = cycle_length
       self_bl.cycle_begin() # test whether this was overidden correctly
-      self_bl.cycle_timer = self_bl.event_dispatcher.Timer(cycle_length,
-         self_bl.cycle_begin, parent=self_bl, persistence=True, align=True)
+      self_bl.cycle_timer = self_bl.event_dispatcher.set_timer(cycle_length,
+         self_bl.cycle_begin, parent=self_bl, persist=True, align=True)
       self_bl.bandwith_loggers.add(self_bl) # why are we doing this, again?
 
    def bandwith_request(self, *args, **kwargs):
@@ -149,17 +160,16 @@ class BandwithLoggerBase(RingBuffer):
       should be implemented by subclasses."""
       self.em_cycle()
 
-   def clean_up(self):
+   def close(self):
       if (self.cycle_timer):
-         self.cycle_timer.stop()
+         self.cycle_timer.cancel()
          self.cycle_timer = None
       if (self in self.bandwith_loggers):
          self.bandwith_loggers.remove(self)
       
-      self.em_cleanup()
-      self.em_cycle.clean_up()
-      self.em_cleanup.clean_up()
-
+      self.em_close()
+      self.em_cycle.close()
+      self.em_close.close()
 
 
 class NullBandwithLimiter(BandwithLoggerBase):
@@ -213,7 +223,7 @@ class PriorityBandwithLimiter(BandwithLoggerBase):
          instantiated with the passed parameters, registered and returned."""
       assert (bytes >= bytes_min > 0)
       if (bytes_min > self.byte_slice):
-         raise BandwithError("bytes_min %s is greater than byte_slice %s; request would never be granted" % (bytes_min, self.byte_slice))
+         raise BandwithError("bytes_min {0} is greater than byte_slice {1}; request would never be granted".format(bytes_min, self.byte_slice))
          
       if (bytes_min <= self.byte_reserve):
          grant = min(self.byte_reserve, bytes_min)
