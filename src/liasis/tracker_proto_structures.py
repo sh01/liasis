@@ -137,6 +137,7 @@ class HTTPTrackerRequest(TrackerRequest):
          self.log(30, 'Tracker request to {0!a} failed. Resultstring: {1!a}. Error: {2!a} ({3!a})'.format(self.announce_url, bytes(response_http), exc, str(exc)), exc_info=False)
       else:
          self.result_callback(self, response_data)
+         self.connection = None
          self.close()
    
    def request_send(self, event_dispatcher, result_callback, error_callback):

@@ -60,7 +60,7 @@ class DHTNodeTable:
    ID_LEN = 160 # in bits
    def __init__(self, id_, bucket_size_max=8):
       nodes = []
-      for i in xrange(self.ID_LEN + 1):
+      for i in range(self.ID_LEN + 1):
          nodes.append([])
       self._nodes = tuple(nodes)
       self.id = id_

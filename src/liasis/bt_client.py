@@ -453,11 +453,11 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       for (i_p,i_b) in ((i_p,i_b) for (i_p, i_b) in self.blocks_pending if (i_p == piece_index)):
          self.block_cancel(i_p,i_b)
 
-   def close(self, *args, **kwargs):
+   def process_close(self, *args, **kwargs):
       """Close connection and disassociate ourselves from BT object tree"""
       self.closing = True
-      if (self):
-         AsyncDataStream.close(self, *args, **kwargs)
+      #if (self):
+      #   AsyncDataStream.close(self, *args, **kwargs)
       if not (self.bth is None):
          self.bth.connection_remove(self)
          self.bth.pieces_availability_adjust_mask(self.piecemask, -1)
@@ -1235,11 +1235,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
       self.log2(12, '{0} processing valid ALLOWED FAST message for piece {1}.'.format(self, piece_index))
       self.pieces_allowed_fast.add(piece_index)
-
-   def close_process(self, fd):
-      """Process closing of one of our fds"""
-      if not (self.closing):
-         self.close()
    
    # standard python operator overloading
    def __repr__(self):
@@ -1256,18 +1251,21 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          return -1
       return 0
    
-   #FIXME: port to python 3.0
-   def __cmp__(self, other):
-      tdcr = self.traffic_delta_cmp(other)
-      if (tdcr != 0):
-         return tdcr
-      # completely arbitrary and completely consistent
-      if not (self is other):
-         if (id(self) < id(other)):
-            return -1
-         return 1
-      return 0
-   
+   def __eq__(self, other):
+      return (self is other)
+   def __ne__(self, other):
+      return not (self is other)
+   def __lt__(self, other):
+      td = self.traffic_delta_cmp(other)
+      return ((td == -1) or ((td == 0) and (id(self) < id(other))))
+   def __le__(self, other):
+      td = self.traffic_delta_cmp(other)
+      return ((td == -1) or ((td == 0) and (id(self) <= id(other))))
+   def __gt__(self, other):
+      return ((td == 1) or ((td == 0) and (id(self) > id(other))))
+   def __gt__(self, other):
+      return ((td == 1) or ((td == 0) and (id(self) >= id(other))))
+
    def __hash__(self):
       return hash(id(self))
    
@@ -1710,9 +1708,9 @@ class BTorrentHandler:
          return False
       
       if (index == (self.piece_count - 1)):
-         subrange = xrange(self.blockmask.blocks_per_piece_last)
+         subrange = range(self.blockmask.blocks_per_piece_last)
       else:
-         subrange = xrange(self.blockmask.blocks_per_piece)
+         subrange = range(self.blockmask.blocks_per_piece)
       
       for sub_index in subrange:
          if ((not self.blockmask.block_have_get(index, sub_index)) and 
