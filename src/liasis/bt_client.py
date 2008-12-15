@@ -29,8 +29,8 @@ from hashlib import sha1,md5
 from io import BytesIO
 
 # python-crypto
-# FIXME: Get this. Somehow. Anyhow.
 # from Crypto.Cipher import ARC4
+from .crypto import ARC4
 
 # gonium
 from gonium.fdm import AsyncDataStream, AsyncSockServer
@@ -205,9 +205,8 @@ class MSEBase:
       """Initialize RC4 decoder and encoder for this connection"""
       self.mse_rc4_dec = ARC4.new(self.mse_data_hash(initstring_dec + self.mse_S + self.mse_skey))
       self.mse_rc4_enc = ARC4.new(self.mse_data_hash(initstring_enc + self.mse_S + self.mse_skey))
-      # Apparently "discarding the first 1024 bytes of RC4 output" is
-      # equivalent to feeding the algorithm 1024 bytes of arbitrary data and
-      # discarding the result.
+      # The MSE spec requires us to discard 1024 bytes of ARC4 output on
+      # initialization.
       self.mse_rc4_dec.decrypt(b'\x00'*1024)
       self.mse_rc4_enc.encrypt(b'\x00'*1024)
    
