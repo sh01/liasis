@@ -46,7 +46,7 @@ class ARC4:
          i = (i + 1) % 256
          j = (j + S[i]) % 256
          (S[i], S[j]) = (S[j], S[i])
-         rv[k] = plaintext[k] ^ S[(S[i] + S[j]) % 256]
+         rv[k] = int(plaintext[k]) ^ S[(S[i] + S[j]) % 256]
       
       self._i = i
       self._j = j
