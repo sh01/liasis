@@ -267,7 +267,7 @@ class MSEBase:
       if (hlen != len(hv2)):
          raise Exception('Bogus hash results: hv1: {0!a} hv2: {1!a} from parameters skey: {2!a} and mse_S: {3!a}.'.format(hv1, hv2, skey, self.mse_S))
       
-      rv = b''.join([chr(ord(hv1[i]) ^ ord(hv2[i])) for i in range(hlen)])
+      rv = bytes(((hv1[i] ^ hv2[i]) for i in range(hlen)))
       
       return rv
    
