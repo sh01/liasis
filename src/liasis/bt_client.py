@@ -1374,7 +1374,6 @@ class BTDiskIO:
          length = self.length - (length * (self.piece_max))
 
       data = self.read(length)
-      print (len(data),length)
       assert (len(data) == length)
       return self.hash_helper(data).digest()
 
@@ -1392,7 +1391,10 @@ class BTDiskIO:
             data = target.file.read(len_read)
             if (len(data) != len_read):
                raise BTFileError('Reading outside of written domain')
-            rv[-length:-length + len_read] = data
+            # The case [-x:0] is special, in that differently from [-x:-y] it
+            # will append to the end of the array; the right thing to do to
+            # overwrite a suffix in place is use [-x:None].
+            rv[-length:(-length + len_read) or None] = data
             length -= len_read
             if (length <= 0):
                break
