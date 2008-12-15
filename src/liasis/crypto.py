@@ -53,5 +53,5 @@ class ARC4:
       
       return rv
     
-   encrypt = decrypyt = _crypt
+   encrypt = decrypt = _crypt
    
