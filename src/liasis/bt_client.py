@@ -2266,7 +2266,7 @@ class BTClient:
    def client_connection_handle(self, sock, addrinfo):
       """Handle newly accepted connection on server socket"""
       self.log(15, 'BTClient {0} accepting connection from {1}.'.format(self, addrinfo))
-      conn = BTClientConnection(sock)
+      conn = BTClientConnection(self.event_dispatcher, sock)
       conn.handshake_callback = self.client_connection_handle_handshake
       conn.btpeer = BTPeer(addrinfo[0], addrinfo[1], None)
       conn.bandwidth_logger_in = self.bandwidth_logger_in
