@@ -53,6 +53,9 @@ class BitMask(bytearray):
       bytearray.__init__(self, arg1, *args, **kwargs)
       self.bitlen = bitlen
    
+   def __reduce__(self):
+      return (_Bitmask_new, (), self.__getstate__())
+   
    def __getstate__(self):
       return (bytes(self), self.bitlen)
    
@@ -98,6 +101,11 @@ class BitMask(bytearray):
                rv += 1
             i //= 2
       return rv
+
+
+def _Bitmask_new(*args, **kwargs):
+   """Bitmask unpickling helper function."""
+   return BitMask.__new__(BitMask, *args, **kwargs)
 
 
 class BlockMask(BitMask):

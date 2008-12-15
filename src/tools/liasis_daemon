@@ -32,7 +32,7 @@ from gonium.posix.signal import SignalCatcher, SA_RESTART
 from liasis.benc_structures import BTMetaInfo
 from liasis import bt_client
 from liasis.bt_client import BTorrentHandler, EABTClient
-from liasis import bandwith_management
+from liasis import bandwidth_management
 from liasis import bt_management
 from liasis import bt_semipermanent_stats # need for btc unpickling
 from liasis.bt_semipermanent_stats import BTStatsTracker
