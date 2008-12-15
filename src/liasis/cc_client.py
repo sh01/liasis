@@ -21,7 +21,7 @@ import time
 from gonium.fdm import AsyncDataStream
 from gonium.event_multiplexing import EventMultiplexer
 
-from .liasis.bandwith_management import RingBuffer
+from .liasis.bandwidth_management import RingBuffer
 
 from .benc_structures import BTMetaInfo
 from .cc_base import BTControlConnectionBase, BTControlConnectionError, \
@@ -286,9 +286,9 @@ class ThroughputCounter:
          self.msg_send(b'SUBSCRIBEBTHTHROUGHPUT', [i]) # won't hurt, even if we already are subscribed
          for (infohash, bth) in self.bt_clients[i].torrents.items():
             self.msg_send(b'GETBTHTHROUGHPUT', [i, infohash, self.history_length])
-            if not (hasattr(bth, 'bandwith_logger_in')):
-               bth.bandwith_logger_in = RingBuffer(self.history_length)
-               bth.bandwith_logger_out = RingBuffer(self.history_length)
+            if not (hasattr(bth, 'bandwidth_logger_in')):
+               bth.bandwidth_logger_in = RingBuffer(self.history_length)
+               bth.bandwidth_logger_out = RingBuffer(self.history_length)
    
    def throughput_block_log(self, client_idx, info_hash, td_down, td_up):
       """Process received block of throughput data."""
@@ -306,8 +306,8 @@ class ThroughputCounter:
       padding = [None]*(self.history_length - l)
       # Since we're up to date, the client and info-hash had better exist.
       bth = self.bt_clients[client_idx].torrents[info_hash]
-      bli = bth.bandwith_logger_in = RingBuffer(self.history_length)
-      blo = bth.bandwith_logger_out = RingBuffer(self.history_length)
+      bli = bth.bandwidth_logger_in = RingBuffer(self.history_length)
+      blo = bth.bandwidth_logger_out = RingBuffer(self.history_length)
       
       bli.history = td_down + padding
       blo.history = td_up + padding
@@ -332,8 +332,8 @@ class ThroughputCounter:
       
       for i in range(l):
          bth = bthd[ihl[i]]
-         bth.bandwith_logger_in.slice_add(td_down[i])
-         bth.bandwith_logger_out.slice_add(td_up[i])
+         bth.bandwidth_logger_in.slice_add(td_down[i])
+         bth.bandwidth_logger_out.slice_add(td_up[i])
 
 
 class BTControlConnectionClientGonium(BTControlConnectionClient,

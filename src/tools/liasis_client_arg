@@ -27,7 +27,7 @@ from gonium.fdm import ED_get
 from liasis.cc_client import BTControlConnectionClientGonium, ThroughputCounter
 
 
-def bandwith_avg(data):
+def bandwidth_avg(data):
    data = [d for d in data if not (d is None)]
    if (len(data) == 0):
       return None
@@ -96,14 +96,14 @@ class btccs(BTControlConnectionClientGonium):
          for bth in btc.torrents.values():
             if not (bth.active):
                continue
-            print('{0}: Bandwith usage for {1!a}:'.format(self.dts_fmt(), bth.target_basename_get()))
-            avg_in_10 = (bandwith_avg(bth.bandwith_logger_in[-10:]) or 0)/1024
-            avg_in_100 = (bandwith_avg(bth.bandwith_logger_in[-100:]) or 0)/1024
-            avg_in_1000 = (bandwith_avg(bth.bandwith_logger_in[-1000:]) or 0)/1024
+            print('{0}: Bandwidth usage for {1!a}:'.format(self.dts_fmt(), bth.target_basename_get()))
+            avg_in_10 = (bandwidth_avg(bth.bandwidth_logger_in[-10:]) or 0)/1024
+            avg_in_100 = (bandwidth_avg(bth.bandwidth_logger_in[-100:]) or 0)/1024
+            avg_in_1000 = (bandwidth_avg(bth.bandwidth_logger_in[-1000:]) or 0)/1024
          
-            avg_out_10 = (bandwith_avg(bth.bandwith_logger_out[-10:]) or 0)/1024
-            avg_out_100 = (bandwith_avg(bth.bandwith_logger_out[-100:]) or 0)/1024
-            avg_out_1000 = (bandwith_avg(bth.bandwith_logger_out[-1000:]) or 0)/1024
+            avg_out_10 = (bandwidth_avg(bth.bandwidth_logger_out[-10:]) or 0)/1024
+            avg_out_100 = (bandwidth_avg(bth.bandwidth_logger_out[-100:]) or 0)/1024
+            avg_out_1000 = (bandwidth_avg(bth.bandwidth_logger_out[-1000:]) or 0)/1024
       
             print('\tout(summary): {0:.2} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_out_10, avg_out_100, avg_out_1000))
             print('\tin(summary): {0:.2} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_in_10, avg_in_100, avg_in_1000))

@@ -43,7 +43,7 @@ from .bt_exceptions import BTClientError
 from .bt_piecemasks import BitMask, BlockMask
 from .benc_structures import BTPeer
 from .tracker_proto_structures import tracker_request_build
-from .bandwith_management import NullBandwithLimiter, PriorityBandwithLimiter
+from .bandwidth_management import NullBandwidthLimiter, PriorityBandwidthLimiter
 from .bt_client_mirror import BTClientConnectionMirror, BTorrentHandlerMirror, BTClientMirror
 from .bt_semipermanent_stats import BTStatsTracker
 
@@ -349,7 +349,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.sync_done = False
       self.closing = False # currently running self.close() ?
       self.buffer_input_len = 0
-      self.bandwith_request = None
+      self.bandwidth_request = None
       self.flush_done_callback = None
       
       # general instance state; set this manually after instantiation for 
@@ -369,8 +369,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.ts_start = time.time()
       self.time_block_in_waiting = None
       self.ts_request_last_out = 0
-      self.bandwith_logger_in = None
-      self.bandwith_manager_out = None
+      self.bandwidth_logger_in = None
+      self.bandwidth_manager_out = None
       self.bt_buffer_output = bytearray()
       self.peer_req_count = 0 # total count of blocks requested by peer
       # extensions that are active on this connection
@@ -407,8 +407,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       piece_count = len(bth.metainfo.piece_hashes)
       self.piece_max = piece_count - 1
       self.piecemask = BitMask(bitlen=piece_count)
-      self.bandwith_logger_in = bth.bandwith_logger_in
-      self.bandwith_manager_out = bth.bandwith_manager_out
+      self.bandwidth_logger_in = bth.bandwidth_logger_in
+      self.bandwidth_manager_out = bth.bandwidth_manager_out
       self.instance_init_done = True
 
    def state_get(self):
@@ -471,9 +471,9 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       elif not (self.btc is None):
          self.btc.connection_remove(self)
          self.btc = None
-      if (self.bandwith_request):
-         self.bandwith_request.cancel()
-         self.bandwith_request = None
+      if (self.bandwidth_request):
+         self.bandwidth_request.cancel()
+         self.bandwidth_request = None
       if (self.flush_done_callback):
          self.flush_done_callback()
          self.flush_done_callback = None
@@ -510,7 +510,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          iff not, flush_done_callback will be called back when it does."""
       if (not self.blocks_pending_out):
          return True
-      assert (self.bandwith_request is None)
+      assert (self.bandwidth_request is None)
       (piece_index, block_start, block_length) = self.blocks_pending_out.popleft()
       self.log2(12, 'Connection {0} queueing block p{1}, s{2}, l{3} for peer.'.format(self, piece_index, block_start, block_length))
       
@@ -523,12 +523,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       request_done = False
       while (not request_done):
          bytes_target = len(self.bt_buffer_output)
-         grant = self.bandwith_manager_out.bandwith_request(bytes_target, self.bytes_request_min, callback=self.data_flush_callback, parent=self)
+         grant = self.bandwidth_manager_out.bandwidth_request(bytes_target, self.bytes_request_min, callback=self.data_flush_callback, parent=self)
          if (isinstance(grant, int)):
             self.data_flush_callback(None, grant, (grant == bytes_target))
             request_done = (grant == bytes_target)
          else:
-            self.bandwith_request = grant
+            self.bandwidth_request = grant
             self.flush_done_callback = flush_done_callback
             return False
 
@@ -536,7 +536,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       return True
 
    # general-purpose internal methods
-   def data_flush_callback(self, bandwith_request, bytes_granted, request_done):
+   def data_flush_callback(self, bandwidth_request, bytes_granted, request_done):
       """Send at most <bytes> bytes of buffered data down the protocol stack"""
       assert (len(self.bt_buffer_output) >= bytes_granted)
       self.send_bytes(self.bt_buffer_output[:bytes_granted])
@@ -545,9 +545,9 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
       if (request_done):
          if (self.bt_buffer_output):
-            #self.bandwith_manager_out.bandwith_take(len(self.bt_buffer_output))
+            #self.bandwidth_manager_out.bandwidth_take(len(self.bt_buffer_output))
             self.send_bytes((self.bt_buffer_output,))
-         self.bandwith_request = None
+         self.bandwidth_request = None
          if not (self.flush_done_callback is None):
             self.flush_done_callback(self)
             self.flush_done_callback = None
@@ -563,7 +563,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       else:
          self.send_bytes((data,), **kwargs)
          if (bw_count):
-            self.bandwith_manager_out.bandwith_take(len(data))
+            self.bandwidth_manager_out.bandwidth_take(len(data))
    
    # MSE handshakes
    def mse_hss1_send(self):
@@ -803,7 +803,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          self.discard_inbuf_data()
          in_data = self.in_buf_plain
       
-      self.bandwith_logger_in.bandwith_take(len(in_data) - self.buffer_input_len)
+      self.bandwidth_logger_in.bandwidth_take(len(in_data) - self.buffer_input_len)
       self.buffer_input_len = len(in_data)
       
       if (self.mse_init):
@@ -1444,7 +1444,7 @@ class BTorrentHandler:
    
    optimistic_unchoke_rate = 0.2
    
-   # defaults for bandwith limiter instantiation, if not provided by user
+   # defaults for bandwidth limiter instantiation, if not provided by user
    bwm_cycle_length = 1
    bwm_history_length = 1000
    # peer connection limits for a single torrent
@@ -1477,7 +1477,7 @@ class BTorrentHandler:
                 peer_connection_count_target=50,
                 peer_connections_start_delay=300, basename_use=True,
                 piecemask=None, piecemask_validate=True,
-                bli_cls=NullBandwithLimiter, bmo_cls=NullBandwithLimiter,
+                bli_cls=NullBandwidthLimiter, bmo_cls=NullBandwidthLimiter,
                 downloader_count=4, content_bytes_out=0, content_bytes_in=0,
                 ts_downloading_start=None, ts_downloading_finish=None,
                 active=False, bytes_left=None, download_complete=False,
@@ -1540,13 +1540,13 @@ class BTorrentHandler:
       # whether we are expecting to be sent that block by a peer
       self.blockmask_req = BlockMask(self.piece_count, self.piece_length_get(False), self.piece_length_get(True), self.block_length)
       
-      self.chunk_upload_bandwith_req = None
+      self.chunk_upload_bandwidth_req = None
       self.pieces_availability = [0]*self.piece_count
       self.pieces_preference = ()
       self.bli_cls = bli_cls
       self.bmo_cls = bmo_cls
-      self.bandwith_logger_in = self.bandwith_logger_out = \
-         self.bandwith_manager_out = None
+      self.bandwidth_logger_in = self.bandwidth_logger_out = \
+         self.bandwidth_manager_out = None
 
       
    def data_transfers_start(self):
@@ -1587,10 +1587,10 @@ class BTorrentHandler:
       else:
          self.piecemask = BitMask(bitlen=self.piece_count)
 
-      self.bandwith_logger_in = self.bli_cls(self.event_dispatcher,
+      self.bandwidth_logger_in = self.bli_cls(self.event_dispatcher,
          cycle_length=self.bwm_cycle_length,
          history_length=self.bwm_history_length)
-      self.bandwith_logger_out = self.bandwith_manager_out = \
+      self.bandwidth_logger_out = self.bandwidth_manager_out = \
          self.bmo_cls(self.event_dispatcher, cycle_length=self.bwm_cycle_length,
          history_length=self.bwm_history_length)
 
@@ -1606,14 +1606,14 @@ class BTorrentHandler:
       self.init_done = True
    
    def bl_close(self):
-      """Stop and forget bandwith loggers and managers"""
-      for bl in (self.bandwith_logger_in, self.bandwith_logger_out, self.bandwith_manager_out):
+      """Stop and forget bandwidth loggers and managers"""
+      for bl in (self.bandwidth_logger_in, self.bandwidth_logger_out, self.bandwidth_manager_out):
          if (bl is None):
             continue
          bl.close()
-      self.bandwith_logger_in = None
-      self.bandwith_logger_out = None
-      self.bandwith_manager_out = None
+      self.bandwidth_logger_in = None
+      self.bandwidth_logger_out = None
+      self.bandwidth_manager_out = None
 
    def timers_clear(self):
       """Stop timers associated with this instance and clear timer attributes"""
@@ -1856,7 +1856,7 @@ class BTorrentHandler:
       self.chunk_upload()
 
    def chunk_upload(self, conn=None):
-      """Request bandwith from bandwith_manager_out and use it to have uploading
+      """Request bandwidth from bandwidth_manager_out and use it to have uploading
          connections send chunks to peers"""
       assert ((conn is None) or (conn is self.downloader_active))
       
@@ -2022,7 +2022,7 @@ class BTorrentHandler:
          self.log(15, 'BTH {0} is opening connection to peer {1!a}.'.format(self, peer))
          conn = BTClientConnection.peer_connect(self.event_dispatcher,peer.address_get())
          conn.info_hash = self.metainfo.info_hash
-         conn.bandwith_logger_in = self.bandwith_logger_in
+         conn.bandwidth_logger_in = self.bandwidth_logger_in
          self.connection_add(conn)
          conn.handshake_send()
       
@@ -2195,7 +2195,7 @@ class BTClient:
       self.el_pickle_shutdown = None
       self.timer_pickle = None
       self.timer_maintenance = None
-      self.bandwith_logger_in = None
+      self.bandwidth_logger_in = None
       self.em_bth_add = EventMultiplexer(self)
       self.em_bth_remove = EventMultiplexer(self)
       self.bt_stats_tracker = BTStatsTracker()
@@ -2225,7 +2225,7 @@ class BTClient:
       
       self.data_basepath = btc_config.data_basepath
       self.event_dispatcher = event_dispatcher
-      self.bandwith_logger_in = NullBandwithLimiter(self.event_dispatcher,
+      self.bandwidth_logger_in = NullBandwidthLimiter(self.event_dispatcher,
          cycle_length=self.bwm_cycle_length, 
          history_length=self.bwm_history_length)
       
@@ -2271,7 +2271,7 @@ class BTClient:
       conn = BTClientConnection(sock)
       conn.handshake_callback = self.client_connection_handle_handshake
       conn.btpeer = BTPeer(addrinfo[0], addrinfo[1], None)
-      conn.bandwith_logger_in = self.bandwith_logger_in
+      conn.bandwidth_logger_in = self.bandwidth_logger_in
       conn.btc = self
       self.connections_uk.add(conn)
 
@@ -2410,8 +2410,8 @@ class EABTClient(BTClient):
       
       for infohash in self.torrent_infohashes:
          bth = self.torrents[infohash]
-         downstream_data.append(bth.bandwith_logger_in[-1])
-         upstream_data.append(bth.bandwith_logger_out[-1])
+         downstream_data.append(bth.bandwidth_logger_in[-1])
+         upstream_data.append(bth.bandwidth_logger_out[-1])
       
       self.em_throughput(self, downstream_data, upstream_data)
 
@@ -2421,24 +2421,24 @@ class EABTClient(BTClient):
       self.__em_throughput.n = 0
       reg = self.__em_throughput.multiplexer_register
       for bth in self.torrents.values():
-         reg(bth.bandwith_logger_in.em_cycle)
-         reg(bth.bandwith_logger_out.em_cycle)
+         reg(bth.bandwidth_logger_in.em_cycle)
+         reg(bth.bandwidth_logger_out.em_cycle)
          self.__em_throughput.n += 2
 
    def torrent_add(self, *args, **kwargs):
       """Instantiate BTorrentHandler and register and return created BTH"""
       bth = BTClient.torrent_add(self, *args, **kwargs)
       
-      self.__em_throughput.multiplexer_register(bth.bandwith_logger_in.em_cycle)
-      self.__em_throughput.multiplexer_register(bth.bandwith_logger_out.em_cycle)
+      self.__em_throughput.multiplexer_register(bth.bandwidth_logger_in.em_cycle)
+      self.__em_throughput.multiplexer_register(bth.bandwidth_logger_out.em_cycle)
       self.__em_throughput.n += 2
       return bth
    
    def torrent_drop(self, info_hash, *args, **kwargs):
       """Remove BTH with specified info_hash"""
       bth = self.torrents[info_hash]
-      #bli_ec = bth.bandwith_logger_in.em_cycle
-      #blo_ec = bth.bandwith_logger_out.em_cycle
+      #bli_ec = bth.bandwidth_logger_in.em_cycle
+      #blo_ec = bth.bandwidth_logger_out.em_cycle
       
       BTClient.torrent_drop(self, info_hash, *args, **kwargs)
       

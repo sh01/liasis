@@ -150,10 +150,10 @@ class BTControlConnection(BTControlConnectionBase, AsyncDataStream):
       bth = self.btm.bt_clients[client_idx].torrents[torrent_infohash]
       
       self.msg_send(b'BTHTHROUGHPUT', [client_idx, torrent_infohash,
-            bth.bandwith_logger_in.cycle_length*1000,
-            self.seq_None_filter(bth.bandwith_logger_in[-max_len:], -1),
-            bth.bandwith_logger_out.cycle_length*1000,
-            self.seq_None_filter(bth.bandwith_logger_out[-max_len:], -1)
+            bth.bandwidth_logger_in.cycle_length*1000,
+            self.seq_None_filter(bth.bandwidth_logger_in[-max_len:], -1),
+            bth.bandwidth_logger_out.cycle_length*1000,
+            self.seq_None_filter(bth.bandwidth_logger_out[-max_len:], -1)
       ])
    
    def input_process_FORCEBTCREANNOUNCE(self, cmd, args):
