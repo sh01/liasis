@@ -865,7 +865,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             
                data_dec_2 = data_dec[len(self.MSE_VC):]
                (self.mse_peer_crypto_provide, self.mse_padC_len) = struct.unpack('>IH', data_dec_2)
-               in_data = in_data[self.MSE_LEN_CRYPTCHUNK1:]
                self.discard_inbuf_data(self.MSE_LEN_CRYPTCHUNK1)
                in_data = self._in_data_update()
                self.mse_init = 4
@@ -882,7 +881,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                if (self.mse_peer_ia_len > 0):
                   self.mse_init = 5
                else:
-                  self.in_buf_plain = b''
+                  self.in_buf_plain = bytearray()
                   self.mse_init = 6
             else:
                return
@@ -903,7 +902,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             self.mse_init = False
             self.mse_init_done = True
             if (cm == self.MSE_CM_PLAIN):
-               in_data = (self.in_buf_plain + in_data)
+               # Ugly hack.
+               self._inbuf[:0] = self.in_buf_plain
             elif (cm == self.MSE_CM_RC4):
                self.data_auto_decrypt = self.mse_rc4_dec.decrypt
                self.data_auto_encrypt = self.mse_rc4_enc.encrypt
@@ -911,8 +911,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                # can't happen
                raise ValueError('Unknown chosen crypto method {0}.'.format(cm))
             self.log2(15, '{0} finished MSE initialization. Using crypto method {1}.'.format(self, cm))
-            #self._process_input1()
-            #return
+            self._process_input1()
+            return
       
       # Unless the connection has just started and we haven't noticed that it
       # isn't a plain BT connection yet, we should have plaintext data to work
