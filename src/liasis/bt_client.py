@@ -1287,8 +1287,10 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       td = self.traffic_delta_cmp(other)
       return ((td == -1) or ((td == 0) and (id(self) <= id(other))))
    def __gt__(self, other):
+      td = self.traffic_delta_cmp(other)
       return ((td == 1) or ((td == 0) and (id(self) > id(other))))
    def __gt__(self, other):
+      td = self.traffic_delta_cmp(other)
       return ((td == 1) or ((td == 0) and (id(self) >= id(other))))
 
    def __hash__(self):
