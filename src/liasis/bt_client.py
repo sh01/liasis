@@ -1020,10 +1020,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          if (not self):
             return
          #in_data = in_data[header_size:]
+         cont = bool(in_data[header_size:])
+         del(in_data)
          self.__discard_inbuf_data(header_size)
-         in_data = self._in_data_update()
-         if (len(in_data) == 0):
-            return
+         if (cont):
+            self._process_input1()
+         return
       
       # regular protocol mode
       in_data_len = len(in_data)
@@ -1044,7 +1046,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          try:
             input_handler = self.input_handlers[msg_id]
          except KeyError:
-            in_data_sio.seek(-5)
+            in_data_sio.seek(-5,1)
             self.log(30, 'Peer {0!a} sent message with bogus msg_id {1}. Closing connection and discarding client. Message was: {2!a}'.format(self.btpeer, msg_id, in_data_sio.read(4 + msg_len)))
             self.client_error_process()
             return
