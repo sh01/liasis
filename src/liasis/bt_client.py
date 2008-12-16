@@ -911,7 +911,14 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             if (cm == self.MSE_CM_PLAIN):
                # Ugly hack
                del(in_data) # Destroy view on bytearray; next op would fail otherwise
-               self._inbuf[:0] = self.in_buf_plain
+               self._index_in += len(self.in_buf_plain)
+               inbuf = self._inbuf
+               if (len(inbuf) < self._index_in):
+                  raise Exception('MSE init stage 6: inbuf of {0} has len {1}, adjusted _index_in is {2}.'.format(self, len(inbuf),self._index_in))
+               self._inbuf = bytearray(len(inbuf))
+               self._inbuf[:len(self.in_buf_plain)] = self.in_buf_plain
+               self._inbuf[len(self.in_buf_plain):self._index_in] = inbuf
+               self.in_buf_plain = None
                
             elif (cm == self.MSE_CM_RC4):
                self.data_auto_decrypt = self.mse_rc4_dec.decrypt
