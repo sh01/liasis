@@ -1067,6 +1067,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
       if (not self):
          return
+      del(in_data)
       self.__discard_inbuf_data(in_data_sio.tell())
    
    #BT Protocol v1.0 message handlers
