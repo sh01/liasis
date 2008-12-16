@@ -795,6 +795,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.buffer_input_len = len(rv)
       return rv
    
+   def __discard_inbuf_data(self, length:int):
+      """Discard <length> octets of processed plaintext, with or without MSE"""
+      if (self.data_auto_decrypt is None):
+         self.discard_inbuf_data(self)
+         return
+      del(self.in_buf_plain[:length])
+   
    def process_input(self, in_data):
       """Deal with input to our buffers"""
       if (self.closing):
@@ -902,8 +909,10 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             self.mse_init = False
             self.mse_init_done = True
             if (cm == self.MSE_CM_PLAIN):
-               # Ugly hack.
+               # Ugly hack
+               del(in_data) # Destroy view on bytearray; next op would fail otherwise
                self._inbuf[:0] = self.in_buf_plain
+               
             elif (cm == self.MSE_CM_RC4):
                self.data_auto_decrypt = self.mse_rc4_dec.decrypt
                self.data_auto_encrypt = self.mse_rc4_enc.encrypt
@@ -1010,8 +1019,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          self.handshake_processed = True
          if (not self):
             return
-         in_data = in_data[header_size:]
-         self.discard_inbuf_data(header_size)
+         #in_data = in_data[header_size:]
+         self.__discard_inbuf_data(header_size)
          in_data = self._in_data_update()
          if (len(in_data) == 0):
             return
@@ -1056,7 +1065,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
       if (not self):
          return
-      self.discard_inbuf_data(in_data_sio.tell())
+      self.__discard_inbuf_data(in_data_sio.tell())
    
    #BT Protocol v1.0 message handlers
    def input_process_choke(self, data_sio, payload_len):
