@@ -798,7 +798,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def __discard_inbuf_data(self, length:int):
       """Discard <length> octets of processed plaintext, with or without MSE"""
       if (self.data_auto_decrypt is None):
-         self.discard_inbuf_data(self)
+         self.discard_inbuf_data()
          return
       del(self.in_buf_plain[:length])
    
