@@ -274,7 +274,7 @@ class MSEBase:
 class BTClientConnection(AsyncDataStream, MSEBase):
    """Connection to a single BT peer"""
    pstr = b'BitTorrent protocol' #ver 1.0
-   pprefix = bytes((len(self.pstr),)) + pstr
+   pprefix = bytes((len(pstr),)) + pstr
    
    logger = logging.getLogger('BTClientConnection.l1')
    log = logger.log
