@@ -920,7 +920,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          # The following sanity checks are slightly wasteful in pathological
          # cases, but should always do the Right Thing.
          pstrlen = len(self.pstr)
-         pstrlen_bin = chr(pstrlen)
+         pstrlen_bin = bytes((len(self.pstr),))
          fmtstr = '>B{0}s8s20s20s'.format(pstrlen)
          header_size = struct.calcsize(fmtstr)
          if (not in_data):
