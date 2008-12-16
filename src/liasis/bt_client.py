@@ -539,14 +539,18 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def data_flush_callback(self, bandwidth_request, bytes_granted, request_done):
       """Send at most <bytes> bytes of buffered data down the protocol stack"""
       assert (len(self.bt_buffer_output) >= bytes_granted)
+      #self.log(40, 'DO3: {0} {1} {2}'.format(self, bytes_granted, request_done, bytes(data[:20])))
       self.send_bytes((self.bt_buffer_output[:bytes_granted],))
+      self.ts_traffic_last_out = time.time()
       
-      del(self.bt_buffer_output[:bytes_granted])
+      self.bt_buffer_output = bytearray(self.bt_buffer_output[bytes_granted:])
       
       if (request_done):
          if (self.bt_buffer_output):
             #self.bandwidth_manager_out.bandwidth_take(len(self.bt_buffer_output))
+            #self.log(40, 'DO2: {0} {1}'.format(self, bytes(data[:20])))
             self.send_bytes((self.bt_buffer_output,))
+            self.ts_traffic_last_out = time.time()
          self.bandwidth_request = None
          if not (self.flush_done_callback is None):
             self.flush_done_callback(self)
@@ -561,7 +565,9 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if (self.bt_buffer_output or buffering_force):
          self.bt_buffer_output += data
       else:
+         self.log(40, 'DO1: {0} {1}'.format(self, bytes(data[:20])))
          self.send_bytes((data,), **kwargs)
+         self.ts_traffic_last_out = time.time()
          if (bw_count):
             self.bandwidth_manager_out.bandwidth_take(len(data))
    
@@ -620,7 +626,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          return
       header = struct.pack('>LB', (len(payload) + 1), msg_id)
       self.send_data_bt(header + payload, bw_count=bw_count, buffering_force=buffering_force)
-      self.ts_traffic_last_out = time.time()
       
    def choke_send(self, choking):
       """Send CHOKE/UNCHOKE message to peer and save status"""
@@ -1061,7 +1066,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          try:
             input_handler(self, in_data_sio, msg_len-1)
          except (BTClientError, ValueError, struct.error, AssertionError) as exc:
-            self.log(30, 'Exception {0!a} on connection peer {1!a}. Closing connection and discarding peer.'.format(str(exc), self.btpeer), exc_info=isinstance(exc, AssertionError))
+            self.log(30, 'Exception {0!a} on connection peer {1!a}. Buffered data {2!a}. Closing connection and discarding peer.'.format(str(exc), self.btpeer, bytes(in_data)), exc_info=isinstance(exc, (AssertionError, BTClientError)))
             self.client_error_process()
             return
          
