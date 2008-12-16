@@ -274,6 +274,7 @@ class MSEBase:
 class BTClientConnection(AsyncDataStream, MSEBase):
    """Connection to a single BT peer"""
    pstr = b'BitTorrent protocol' #ver 1.0
+   pprefix = bytes((len(self.pstr),)) + pstr
    
    logger = logging.getLogger('BTClientConnection.l1')
    log = logger.log
@@ -596,7 +597,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def handshake_str_get(self):
       """Return the BT handshake string we are going to send"""
       assert (self.instance_init_done and (len(self.info_hash) == 20) and (len(self.self_id) == 20))
-      return b''.join((struct.pack('>B', len(self.pstr)), self.pstr, self.reserved.binstring_get(), self.info_hash, self.self_id))
+      return b''.join((struct.pack('>B', self.pprefix, self.reserved.binstring_get(), self.info_hash, self.self_id))
    
    def handshake_send(self):
       """Send handshake to peer"""
@@ -808,7 +809,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          # MSE input decryption
          self.in_buf_plain += self.data_auto_decrypt(in_data)
          self.discard_inbuf_data()
-         in_data = self.in_buf_plain
+         in_data = memoryview(self.in_buf_plain)
       
       self.bandwidth_logger_in.bandwidth_take(len(in_data) - self.buffer_input_len)
       self.buffer_input_len = len(in_data)
@@ -920,12 +921,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          # The following sanity checks are slightly wasteful in pathological
          # cases, but should always do the Right Thing.
          pstrlen = len(self.pstr)
-         pstrlen_bin = bytes((len(self.pstr),))
+         pprefix = self.pprefix
          fmtstr = '>B{0}s8s20s20s'.format(pstrlen)
          header_size = struct.calcsize(fmtstr)
          if (not in_data):
             return # nothing to see here, yet.
-         if not (in_data[0:1] == pstrlen_bin):
+         if (in_data[0] != self.pprefix[0]):
             # Not what we expect.
             if (self.mse_init_done):
                self.log(30, 'Presumed BT client at {0} started with data {1}, which is bogus. Closing connection.'.format(self.btpeer, in_data))
@@ -938,7 +939,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             return
          if (len(in_data) < (pstrlen + 1)):
             return # nothing more to see here, yet
-         if not (in_data.startswith(b''.join((pstrlen_bin, self.pstr)))):
+         if (in_data[:len(self.pprefix)] != memoryview(self.pprefix)):
             # Not what we expect, either.
             if (self.mse_init_done):
                self.log(30, 'Presumed BT client at {0} started with data {1!a}, which is bogus. Closing connection.'.format(self.btpeer, in_data))
