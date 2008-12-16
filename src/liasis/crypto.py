@@ -42,6 +42,9 @@ class ARC4:
       
       rv = bytearray(len(plaintext))
       
+      if (isinstance(plaintext, memoryview)):
+         plaintext = bytes(plaintext)
+      
       for k in range(len(plaintext)):
          i = (i + 1) % 256
          j = (j + S[i]) % 256
@@ -54,4 +57,22 @@ class ARC4:
       return rv
     
    encrypt = decrypt = _crypt
-   
+
+
+def _selftest():
+   from binascii import b2a_hex
+   for (key,pt,ct) in (
+      (b"secret",b"What's the airspeed of an unladen swallow?",
+       b'\xba^\xb3h\xa5\xd7\xf6\xd2Z\xae\x9b\xbd\x9a\x94\x86G\xc8R\x16\xc2\xec\x95\xe4=\x1e\\\x01\x89\xb6\x0b1z\xd1\xd9l\xf4\xa7/B\xb4=\xee'),
+      (b"topsecret",bytearray(b"I'm being oppressed!"),
+       b'\x9cO\xc2\xb5\xfd\x065\xa3p\x86\xb4\xc6.L\xf7\xa83\\\x99\xda'),
+      (b"pass", memoryview(b"Nobody expects the Spanish inquisition!"),
+       b'\x0e\xaf\xd6\xabX\xde\x90\x97\xcf4\xfa\xcc\xf9\xa9\x91\xe8\xc4\xcaN\x1c\xf4\x12\x1b.<\xa5\xf8\x07=\xbc\xdfo\xa8\xe5\xe7cbo\x8e')):
+      a4ct = bytes(ARC4(key).encrypt(pt))
+      if (ct != a4ct):
+         raise Exception("Key {0} yielded ciphertext {1}, expected {2}".format(key.decode('ascii'), a4ct, ct))
+      print ('correct ciphertext: {0}'.format(b2a_hex(a4ct)))
+
+
+if (__name__ == '__main__'):
+   _selftest()
