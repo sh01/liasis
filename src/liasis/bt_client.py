@@ -785,8 +785,14 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if (self.data_auto_decrypt):
          self.in_buf_plain = val
       else:
-         self.buffers_input[fd] = val
+         self._inbuf[:] = val
       self.buffer_input_len = len(val)
+   
+   def _in_data_update(self):
+      """Update in_data after having baseclass discard input"""
+      rv = memoryview(self._inbuf[:self._index_in])
+      self.buffer_input_len = len(rv)
+      return rv
    
    def process_input(self, in_data):
       """Deal with input to our buffers"""
@@ -816,6 +822,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             self.mse_key_pub_peer = self.mse_s2i(in_data[:96])
             self.mse_S_compute()
             self.discard_inbuf_data(96)
+            in_data = self._in_data_update()
             self.mse_hss1_send()
          
          if (self.mse_init == 1):
@@ -825,6 +832,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                if (i < 0):
                   return
                self.discard_inbuf_data(i + len(hash1))
+               in_data = self._in_data_update()
                self.mse_init = 2
             else:
                return
@@ -838,10 +846,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                   self.log(25, "Handshake validation on {0} failed; not tracking torrent with infohash fitting MSE handshake data.".format(self), exc_info=False)
                   self.mse_init = False
                   self.discard_inbuf_data()
+                  in_data = self._in_data_update()
                   self.close()
                   return
                self.mse_rc4_init()
                self.discard_inbuf_data(20)
+               in_data = self._in_data_update()
                self.mse_init = 3
             else:
                return
@@ -850,12 +860,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             if (self.buffer_input_len >= self.MSE_LEN_CRYPTCHUNK1):
                data_dec = self.mse_rc4_dec.decrypt(in_data[:self.MSE_LEN_CRYPTCHUNK1])
                if not (data_dec.startswith(self.MSE_VC)):
-                  raise MSEProtocolError('Connection {0} got invalid VC value {1} from peer. Closing.'.format(data_dec[:len(self.MSE_VC)]))
+                  raise MSEProtocolError('Connection {0} got invalid VC value {1} from peer. Closing.'.format(self, data_dec[:len(self.MSE_VC)]))
             
                data_dec_2 = data_dec[len(self.MSE_VC):]
                (self.mse_peer_crypto_provide, self.mse_padC_len) = struct.unpack('>IH', data_dec_2)
                in_data = in_data[self.MSE_LEN_CRYPTCHUNK1:]
                self.discard_inbuf_data(self.MSE_LEN_CRYPTCHUNK1)
+               in_data = self._in_data_update()
                self.mse_init = 4
             else:
                return
@@ -865,6 +876,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             if (self.buffer_input_len >= chunk_len):
                data_dec = self.mse_rc4_dec.decrypt(in_data[:chunk_len])
                self.discard_inbuf_data(chunk_len)
+               in_data = self._in_data_update()
                self.mse_peer_ia_len = struct.unpack('>H', data_dec[-2:])[0]
                if (self.mse_peer_ia_len > 0):
                   self.mse_init = 5
@@ -878,6 +890,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             if (self.buffer_input_len >= self.mse_peer_ia_len):
                self.in_buf_plain = self.mse_rc4_dec.decrypt(in_data[:self.mse_peer_ia_len])
                self.discard_inbuf_data(self.mse_peer_ia_len)
+               in_data = self._in_data_update()
                self.mse_init = 6
             else:
                return
@@ -998,6 +1011,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             return
          in_data = in_data[header_size:]
          self.discard_inbuf_data(header_size)
+         in_data = self._in_data_update()
          if (len(in_data) == 0):
             return
       
