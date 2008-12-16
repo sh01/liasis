@@ -926,10 +926,10 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          header_size = struct.calcsize(fmtstr)
          if (not in_data):
             return # nothing to see here, yet.
-         if (in_data[0] != self.pprefix[0]):
+         if (in_data[0] != self.pprefix[0:1]):
             # Not what we expect.
             if (self.mse_init_done):
-               self.log(30, 'Presumed BT client at {0} started with data {1}, which is bogus. Closing connection.'.format(self.btpeer, in_data))
+               self.log(30, 'Presumed BT client at {0} started with data {1}, which is bogus. Closing connection.'.format(self.btpeer, bytes(in_data)))
                self.client_error_process()
             else:
                # Might be a MSE connection, try crypto handshake.
@@ -942,7 +942,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          if (in_data[:len(self.pprefix)] != memoryview(self.pprefix)):
             # Not what we expect, either.
             if (self.mse_init_done):
-               self.log(30, 'Presumed BT client at {0} started with data {1!a}, which is bogus. Closing connection.'.format(self.btpeer, in_data))
+               self.log(30, 'Presumed BT client at {0} started with data {1!a}, which is bogus. Closing connection.'.format(self.btpeer, bytes(in_data)))
                self.client_error_process()
             else:
                # Might be a MSE connection, try crypto handshake.
