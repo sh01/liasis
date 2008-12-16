@@ -597,7 +597,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def handshake_str_get(self):
       """Return the BT handshake string we are going to send"""
       assert (self.instance_init_done and (len(self.info_hash) == 20) and (len(self.self_id) == 20))
-      return b''.join((struct.pack('>B', self.pprefix, self.reserved.binstring_get(), self.info_hash, self.self_id))
+      return b''.join((self.pprefix, self.reserved.binstring_get(), self.info_hash, self.self_id))
    
    def handshake_send(self):
       """Send handshake to peer"""
