@@ -336,7 +336,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.s_snubbed = False
       self.p_interest = False
       self.p_choked = True
-      self.pieces_wanted = []
+      self.pieces_wanted = deque()
       self.blocks_pending = set()
       self.blocks_pending_out = deque()
       self.pieces_suggested = set()
@@ -464,7 +464,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          for (piece_index, block_index) in self.blocks_pending:
             self.bth.blockmask_req.block_have_set(piece_index, block_index, False)
          self.blocks_pending = set()
-         self.pieces_wanted = []
+         self.pieces_wanted = deque()
          
          self.bth = None
       elif not (self.btc is None):
@@ -702,10 +702,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
    def pieces_wanted_update(self, pm_out=None):
       """Update sequence of pieces we are interested in"""
-      for index in self.pieces_wanted[:]:
+      pieces_wanted = self.pieces_wanted
+      self.pieces_wanted = deque()
+      for index in pieces_wanted:
          # Forget about pieces that don't have any further desirable blocks
-         if not (self.bth.query_piece_wanted(index)):
-            self.pieces_wanted.remove(index)
+         if (self.bth.query_piece_wanted(index)):
+            self.pieces_wanted.append(index)
       if (not self.pieces_wanted):
          if (pm_out is None):
             pm_out = self.piecemask
