@@ -539,7 +539,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def data_flush_callback(self, bandwidth_request, bytes_granted, request_done):
       """Send at most <bytes> bytes of buffered data down the protocol stack"""
       assert (len(self.bt_buffer_output) >= bytes_granted)
-      self.send_bytes(self.bt_buffer_output[:bytes_granted])
+      self.send_bytes((self.bt_buffer_output[:bytes_granted],))
       
       del(self.bt_buffer_output[:bytes_granted])
       
@@ -1043,7 +1043,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          try:
             input_handler(self, in_data_sio, msg_len-1)
          except (BTClientError, ValueError, struct.error, AssertionError) as exc:
-            self.log(30, 'Exception {0!a} on connection peer {1!a}. Closing connection and discarding peer.'.format(str(exc), self.btpeer))
+            self.log(30, 'Exception {0!a} on connection peer {1!a}. Closing connection and discarding peer.'.format(str(exc), self.btpeer), exc_info=isinstance(exc, AssertionError))
             self.client_error_process()
             return
          
