@@ -105,8 +105,8 @@ class btccs(BTControlConnectionClientGonium):
             avg_out_100 = (bandwidth_avg(bth.bandwidth_logger_out[-100:]) or 0)/1024
             avg_out_1000 = (bandwidth_avg(bth.bandwidth_logger_out[-1000:]) or 0)/1024
       
-            print('\tout(summary): {0:.2} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_out_10, avg_out_100, avg_out_1000))
-            print('\tin(summary): {0:.2} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_in_10, avg_in_100, avg_in_1000))
+            print('\tout(summary): {0:.2f} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_out_10, avg_out_100, avg_out_1000))
+            print('\tin(summary): {0:.2f} kb/s (10) {1:.2f} kb/s (100) {2:.2f} kb/s (1000)'.format(avg_in_10, avg_in_100, avg_in_1000))
 
          print('')
       
