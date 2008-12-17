@@ -22,9 +22,13 @@ btc_config.data_basepath = 'data'
 # logger config
 def logger_setup():
    import logging
+   import time
    logger = logging.getLogger()
    log = logger.log
-
+   # Show time in UTC. This is both faster than localtime(saving one syscall
+   # per use) and avoids ambiguity in case of DST changes in localtime.
+   logging.Formatter.converter = time.gmtime
+   
    logger.setLevel(10)
    formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
    handler_file_1 = logging.handlers.RotatingFileHandler('log/debug', maxBytes=1024**2, backupCount=5)

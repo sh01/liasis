@@ -299,6 +299,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    MSG_ID_REJECT_REQUEST = 16
    MSG_ID_ALLOWED_FAST = 17
    
+   # Limit the ability of hostile peers to DOS us with ridiculous buffer
+   # sizes.
+   # Raise this if you need it; the default is enough enough bitfields for
+   # torrents with 262144 pieces, which is over an order of magnitude larger
+   # than the biggest I have been able to find.
+   MSG_SIZE_LIMIT = 32769
+   
    pieces_wanted_max = 25
    pieces_queuelen = 5
    pieces_queue_min = 2
@@ -326,7 +333,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       The instantiater will need to set some variables manually if this is
       an outgoing connection.
       """
-      AsyncDataStream.__init__(self, *args, **kwargs)
+      AsyncDataStream.__init__(self, inbufsize_max=(self.MSG_SIZE_LIMIT + 4), *args, **kwargs)
       # purely for convenience
       self.btpeer = None
       
@@ -785,27 +792,37 @@ class BTClientConnection(AsyncDataStream, MSEBase):
 
       self.close()
    
-   def input_buffer_set(self, fd, val):
-      """Set plain text input buffer content to specified value"""
-      if (self.data_auto_decrypt):
-         self.in_buf_plain = val
-      else:
-         self._inbuf[:] = val
-      self.buffer_input_len = len(val)
-   
    def _in_data_update(self):
       """Update in_data after having baseclass discard input"""
       return memoryview(self._inbuf[:self._index_in])
    
-   def __discard_inbuf_data(self, length:int):
-      """Discard <length> octets of processed plaintext, with or without MSE"""
-      if (self.data_auto_decrypt is None):
-         self.discard_inbuf_data(length)
-         self.buffer_input_len = self._index_in
-         return
+   def mse_setup(self, crypt, decrypt):
+      if not (self.data_auto_decrypt is self.data_auto_encrypt is None):
+         raise BTClientError('{0} is already using crypto.'.format(self))
+      self.data_auto_encrypt = crypt
+      self.data_auto_decrypt = decrypt
+      self._discard_inbt_data = self._discard_inbt_data_crypt
+      self._wait_n_bytes = self._wait_n_bytes_crypto
+   
+   def _discard_inbt_data_crypt(self, length:int):
+      """Discard <length> octets of processed plaintext with MSE """
       del(self.in_buf_plain[:length])
       self.buffer_input_len = len(self.in_buf_plain)
    
+   def _discard_inbt_data(self, length:int):
+      """Discard <length> octets of processed plaintext without MSE"""
+      self.discard_inbuf_data(length)
+      self.buffer_input_len = self._index_in
+      return
+   
+   def _wait_n_bytes(self, count:int):
+      """Wait for n more bytes of input before calling process_input again without MSE"""
+      self.size_need = count
+      
+   def _wait_n_bytes_crypto(self, count:int):
+      """Wait for n more bytes of input before calling process_input again with MSE"""
+      self.size_need = count - len(self.in_buf_plain)
+      
    def process_input(self, in_data):
       """Deal with input to our buffers"""
       if (self.closing):
@@ -833,7 +850,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                return
             self.mse_key_pub_peer = self.mse_s2i(in_data[:96])
             self.mse_S_compute()
-            self.__discard_inbuf_data(96)
+            self._discard_inbt_data(96)
             in_data = self._in_data_update()
             self.mse_hss1_send()
          
@@ -843,7 +860,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                i = bytes(in_data).find(hash1)
                if (i < 0):
                   return
-               self.__discard_inbuf_data(i + len(hash1))
+               self._discard_inbt_data(i + len(hash1))
                in_data = self._in_data_update()
                self.mse_init = 2
             else:
@@ -857,12 +874,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                except UnknownTorrentError:
                   self.log(25, "Handshake validation on {0} failed; not tracking torrent with infohash fitting MSE handshake data.".format(self), exc_info=False)
                   self.mse_init = False
-                  self.__discard_inbuf_data()
+                  self._discard_inbt_data()
                   in_data = self._in_data_update()
                   self.close()
                   return
                self.mse_rc4_init()
-               self.__discard_inbuf_data(20)
+               self._discard_inbt_data(20)
                in_data = self._in_data_update()
                self.mse_init = 3
             else:
@@ -876,7 +893,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             
                data_dec_2 = data_dec[len(self.MSE_VC):]
                (self.mse_peer_crypto_provide, self.mse_padC_len) = struct.unpack('>IH', data_dec_2)
-               self.__discard_inbuf_data(self.MSE_LEN_CRYPTCHUNK1)
+               self._discard_inbt_data(self.MSE_LEN_CRYPTCHUNK1)
                in_data = self._in_data_update()
                self.mse_init = 4
             else:
@@ -886,7 +903,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             chunk_len = self.mse_padC_len + 2
             if (self.buffer_input_len >= chunk_len):
                data_dec = self.mse_rc4_dec.decrypt(in_data[:chunk_len])
-               self.__discard_inbuf_data(chunk_len)
+               self._discard_inbt_data(chunk_len)
                in_data = self._in_data_update()
                self.mse_peer_ia_len = struct.unpack('>H', data_dec[-2:])[0]
                if (self.mse_peer_ia_len > 0):
@@ -900,7 +917,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          if (self.mse_init == 5):
             if (self.buffer_input_len >= self.mse_peer_ia_len):
                self.in_buf_plain = self.mse_rc4_dec.decrypt(in_data[:self.mse_peer_ia_len])
-               self.__discard_inbuf_data(self.mse_peer_ia_len)
+               self._discard_inbt_data(self.mse_peer_ia_len)
                in_data = self._in_data_update()
                self.mse_init = 6
             else:
@@ -925,8 +942,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                self.in_buf_plain = None
                
             elif (cm == self.MSE_CM_RC4):
-               self.data_auto_decrypt = self.mse_rc4_dec.decrypt
-               self.data_auto_encrypt = self.mse_rc4_enc.encrypt
+               self.mse_setup(self.mse_rc4_dec.decrypt, self.mse_rc4_enc.encrypt)
             else:
                # can't happen
                raise ValueError('Unknown chosen crypto method {0}.'.format(cm))
@@ -1032,7 +1048,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             return
          cont = bool(in_data[header_size:])
          del(in_data)
-         self.__discard_inbuf_data(header_size)
+         self._discard_inbt_data(header_size)
          if (cont):
             self._process_input1()
          return
@@ -1040,14 +1056,21 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       # regular protocol mode
       in_data_len = len(in_data)
       in_data_sio = BytesIO(in_data)
+      msg_len = 0
       while (self._fw):
          index = in_data_sio.tell()
          if ((in_data_len - index) < 4):
             break
          msg_len = struct.unpack('>L', in_data_sio.read(4))[0]
+         if (msg_len > self.MSG_SIZE_LIMIT):
+            self.log(30, '{0} got message with excessive length {1}. Closing connection and discarding client. Message was: {2!a}'.format(self, in_data_sio.read(4 + msg_len)))
+            self.client_error_process()
+            return
+         
          if ((in_data_len - index) < (msg_len + 4)):
             in_data_sio.seek(index)
             break
+         
          # Message has been buffered completely
          if (msg_len == 0):
             # keepalive msg
@@ -1057,7 +1080,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             input_handler = self.input_handlers[msg_id]
          except KeyError:
             in_data_sio.seek(index)
-            self.log(30, 'Peer {0!a} sent message with bogus msg_id {1}. Closing connection and discarding client. Message was: {2!a}'.format(self.btpeer, msg_id, in_data_sio.read(4 + msg_len)))
+            self.log(30, 'Peer {0!a} sent message with bogus msg_id {1}. Closing connection and discarding client. Message was: {2!a}'.format(self.btpeer, msg_id, bytes(in_data[index:index+4+msg_len])))
             self.client_error_process()
             return
          
@@ -1074,11 +1097,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             self.sync_done = True
          # don't make any assumptions about where the handler has seeked to
          in_data_sio.seek(index + 4 + msg_len)
+         msg_len = 0
       
       if ((not self) or (in_data_sio.tell() == 0)):
          return
       del(in_data)
-      self.__discard_inbuf_data(in_data_sio.tell())
+      self._discard_inbt_data(in_data_sio.tell())
+      self._wait_n_bytes(msg_len + 4)
    
    #BT Protocol v1.0 message handlers
    def input_process_choke(self, data_sio, payload_len):
