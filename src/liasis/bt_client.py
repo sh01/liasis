@@ -518,9 +518,11 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.bth.bt_disk_io.seek(self.bth.piece_length_get()*piece_index + block_start)
       data += self.bth.bt_disk_io.read(block_length)
       self.msg_send(self.MSG_ID_PIECE, data, buffering_force=True)
+      #self.msg_send(self.MSG_ID_PIECE, data, buffering_force=False)
       self.content_bytes_out += block_length
       
       request_done = False
+      #request_done = True
       while (not request_done):
          bytes_target = len(self.bt_buffer_output)
          grant = self.bandwidth_manager_out.bandwidth_request(bytes_target, self.bytes_request_min, callback=self.data_flush_callback, parent=self)
@@ -539,7 +541,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def data_flush_callback(self, bandwidth_request, bytes_granted, request_done):
       """Send at most <bytes> bytes of buffered data down the protocol stack"""
       assert (len(self.bt_buffer_output) >= bytes_granted)
-      #self.log(40, 'DO3: {0} {1} {2}'.format(self, bytes_granted, request_done, bytes(data[:20])))
       self.send_bytes((self.bt_buffer_output[:bytes_granted],))
       self.ts_traffic_last_out = time.time()
       
@@ -548,7 +549,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if (request_done):
          if (self.bt_buffer_output):
             #self.bandwidth_manager_out.bandwidth_take(len(self.bt_buffer_output))
-            #self.log(40, 'DO2: {0} {1}'.format(self, bytes(data[:20])))
             self.send_bytes((self.bt_buffer_output,))
             self.ts_traffic_last_out = time.time()
          self.bandwidth_request = None
@@ -565,7 +565,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if (self.bt_buffer_output or buffering_force):
          self.bt_buffer_output += data
       else:
-         self.log(40, 'DO1: {0} {1}'.format(self, bytes(data[:20])))
          self.send_bytes((data,), **kwargs)
          self.ts_traffic_last_out = time.time()
          if (bw_count):
@@ -803,7 +802,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def __discard_inbuf_data(self, length:int):
       """Discard <length> octets of processed plaintext, with or without MSE"""
       if (self.data_auto_decrypt is None):
-         self.discard_inbuf_data()
+         self.discard_inbuf_data(length)
          return
       del(self.in_buf_plain[:length])
    
@@ -1031,7 +1030,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          self.handshake_processed = True
          if (not self):
             return
-         #in_data = in_data[header_size:]
          cont = bool(in_data[header_size:])
          del(in_data)
          self.__discard_inbuf_data(header_size)
@@ -1048,7 +1046,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             break
          msg_len = struct.unpack('>L', in_data_sio.read(4))[0]
          if ((in_data_len - index) < (msg_len + 4)):
-            in_data_sio.seek(-4,1)
+            in_data_sio.seek(index)
             break
          # Message has been buffered completely
          if (msg_len == 0):
@@ -1058,7 +1056,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          try:
             input_handler = self.input_handlers[msg_id]
          except KeyError:
-            in_data_sio.seek(-5,1)
+            in_data_sio.seek(index)
             self.log(30, 'Peer {0!a} sent message with bogus msg_id {1}. Closing connection and discarding client. Message was: {2!a}'.format(self.btpeer, msg_id, in_data_sio.read(4 + msg_len)))
             self.client_error_process()
             return
@@ -1066,7 +1064,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          try:
             input_handler(self, in_data_sio, msg_len-1)
          except (BTClientError, ValueError, struct.error, AssertionError) as exc:
-            self.log(30, 'Exception {0!a} on connection peer {1!a}. Buffered data {2!a}. Closing connection and discarding peer.'.format(str(exc), self.btpeer, bytes(in_data)), exc_info=isinstance(exc, (AssertionError, BTClientError)))
+            self.log(30, 'Exception {0!a} on connection peer {1!a}. Buffered data {2!a}. Closing connection and discarding peer. Exception:'.format(str(exc), self.btpeer, bytes(in_data)), exc_info=isinstance(exc, (AssertionError, BTClientError)))
             self.client_error_process()
             return
          
@@ -1077,7 +1075,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          # don't make any assumptions about where the handler has seeked to
          in_data_sio.seek(index + 4 + msg_len)
       
-      if (not self):
+      if ((not self) or (in_data_sio.tell() == 0)):
          return
       del(in_data)
       self.__discard_inbuf_data(in_data_sio.tell())
