@@ -78,7 +78,7 @@ class btccs(BTControlConnectionClientGonium):
    def conn_header_print(cls):
       print(cls.conn_fmtstr.format('ip','port','peer id', 'bytes out', 'bytes in', 's_interest', 's_choked', 'p_interest', 'p_choked', 'mse_cm', 'pieces_completed', 'block req count', 'start', 'peer id start'))
       
-   def throughput_block_process_out(self, listener, client_idx, info_hash, *args, **kwargs):
+   def throughput_block_process_out(self, client_idx, info_hash, *args, **kwargs):
       if (b'GETBTHTHROUGHPUT' in [e[0] for e in self.messages_pending]):
          # We haven't received data for all of the infohashes yet
          return
