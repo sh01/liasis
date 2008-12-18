@@ -457,14 +457,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def piece_have_new(self, piece_index):
       """Process notification that our BTorrentHandler has finished a piece"""
       self.have_send(piece_index)
-      for (i_p,i_b) in ((i_p,i_b) for (i_p, i_b) in self.blocks_pending if (i_p == piece_index)):
+      for (i_p,i_b) in [(i_p,i_b) for (i_p, i_b) in self.blocks_pending if (i_p == piece_index)]:
          self.block_cancel(i_p,i_b)
 
    def process_close(self, *args, **kwargs):
       """Close connection and disassociate ourselves from BT object tree"""
       self.closing = True
-      #if (self):
-      #   AsyncDataStream.close(self, *args, **kwargs)
       if not (self.bth is None):
          self.bth.connection_remove(self)
          self.bth.pieces_availability_adjust_mask(self.piecemask, -1)
@@ -2004,6 +2002,7 @@ class BTorrentHandler:
       
       for conn in self.downloaders:
          if not (conn in downloaders):
+            self.log(20, 'Calling uploading_stop() on {0}.'.format(conn))
             conn.uploading_stop(not (conn in senders))
       
       for conn in downloaders:
@@ -2208,6 +2207,7 @@ class BTorrentHandler:
       
    def connection_remove(self, conn):
       """Forget about a tracked connection"""
+      self.log(20, 'Removing conn {0}.'.format(conn))
       self.peer_connections.remove(conn)
       self.content_bytes_in += conn.content_bytes_in
       self.content_bytes_out += conn.content_bytes_out

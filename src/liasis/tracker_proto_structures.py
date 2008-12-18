@@ -183,7 +183,7 @@ class HTTPTrackerRequest(TrackerRequest):
 # Unfortunately, this protocol seems to be limited to ipv4.
 # Fortunately, it doesn't appear to be widely used.
 class UDPTrackerRequest(TrackerRequest):
-   proto = 'udp'
+   proto = b'udp'
    pm_in_init = '>llq'
    pm_in_announce = '>lllll'
    CONNECTION_ID_DEFAULT = 0x41727101980
