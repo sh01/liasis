@@ -97,7 +97,7 @@ class BitMask(bytearray):
       rv = 0
       for i in self:
          while (i > 0):
-            if (i % 2):
+            if (i & 1):
                rv += 1
             i //= 2
       return rv

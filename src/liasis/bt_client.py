@@ -39,13 +39,15 @@ from gonium.event_multiplexing import DSEventAggregator, EventMultiplexer
 
 # local imports
 from . import benc_structures
-from .bt_exceptions import BTClientError
+from .bt_exceptions import BTClientError, BTCStateError, BTFileError, \
+   HandlerNotReadyError
 from .bt_piecemasks import BitMask, BlockMask
 from .benc_structures import BTPeer
 from .tracker_proto_structures import tracker_request_build
 from .bandwidth_management import NullBandwidthLimiter, PriorityBandwidthLimiter
 from .bt_client_mirror import BTClientConnectionMirror, BTorrentHandlerMirror, BTClientMirror
 from .bt_semipermanent_stats import BTStatsTracker
+from .diskio import BTDiskIOSync as BTDiskIO
 
 MAINTENANCE_INTERVAL = 100
 
@@ -71,15 +73,6 @@ class BTProtocolExtensionError(BTProtocolError):
    pass
 
 class ChokedError(BTClientError):
-   pass
-
-class BTFileError(BTClientError):
-   pass
-
-class BTCStateError(BTClientError):
-   pass
-
-class HandlerNotReadyError(BTCStateError):
    pass
 
 class DupeError(BTClientError, ValueError):
@@ -307,8 +300,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    MSG_SIZE_LIMIT = 32769
    
    pieces_wanted_max = 25
-   pieces_queuelen = 5
-   pieces_queue_min = 2
+   pieces_queuelen = 16
+   pieces_queue_min = 8
    
    # note that in practice this will be extended to the next integer multiple
    # of the maintenance_perform() interval of the BTorrentHandler/BTClient
@@ -325,7 +318,9 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    bytes_request_min = 1024
    
    # maximum number of blocks queued for sending to peer
-   blocks_pending_out_limit = 100
+   blocks_pending_out_limit = 128
+   # Minimum number of blocks to wait to be queued before starting sending
+   blocks_pending_out_expect = 1
    
    def __init__(self, *args, **kwargs):
       """ Initialize BTClientConnection instance.
@@ -378,7 +373,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.ts_request_last_out = 0
       self.bandwidth_logger_in = None
       self.bandwidth_manager_out = None
-      self.bt_buffer_output = bytearray()
+      self.bt_buffer_output = None
       self.peer_req_count = 0 # total count of blocks requested by peer
       # extensions that are active on this connection
       self.ext_Fast = False
@@ -462,6 +457,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
 
    def process_close(self, *args, **kwargs):
       """Close connection and disassociate ourselves from BT object tree"""
+      self.log2(18, '{0} shutting down'.format(self))
       self.closing = True
       if not (self.bth is None):
          self.bth.connection_remove(self)
@@ -509,60 +505,64 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             self.blocks_pending_out.clear()
       self.uploading = False
    
-   def block_send_buffer(self, flush_done_callback):
-      """Put piece message for earliest queued block in the output buffer and
-         shedule sending. Returns whether send (if any) finished immediately;
-         iff not, flush_done_callback will be called back when it does."""
-      if (not self.blocks_pending_out):
-         return True
-      assert (self.bandwidth_request is None)
-      (piece_index, block_start, block_length) = self.blocks_pending_out.popleft()
-      self.log2(12, 'Connection {0} queueing block p{1}, s{2}, l{3} for peer.'.format(self, piece_index, block_start, block_length))
+   def read_blocks(self, force=False):
+      """Request blocks from mass storage"""
+      # XXX: Think about tuning this
+      bpo = self.blocks_pending_out
+      if (len(bpo) < self.blocks_pending_out_expect):
+         if (not force):
+            return
+         self.log2(30, '{0} force-reading blocks ({1} pending blocks).'.format(
+            self, len(bpo)))
       
-      data = struct.pack('>LL', piece_index, block_start)
-      self.bth.bt_disk_io.seek(self.bth.piece_length_get()*piece_index + block_start)
-      data += self.bth.bt_disk_io.read(block_length)
-      self.msg_send(self.MSG_ID_PIECE, data, buffering_force=True)
-      #self.msg_send(self.MSG_ID_PIECE, data, buffering_force=False)
-      self.content_bytes_out += block_length
+      if (sum(len(b) for b in self._outbuf) > 16384):
+         return
       
-      request_done = False
-      #request_done = True
-      while (not request_done):
-         bytes_target = len(self.bt_buffer_output)
-         grant = self.bandwidth_manager_out.bandwidth_request(bytes_target, self.bytes_request_min, callback=self.data_flush_callback, parent=self)
-         if (isinstance(grant, int)):
-            self.data_flush_callback(None, grant, (grant == bytes_target))
-            request_done = (grant == bytes_target)
-         else:
-            self.bandwidth_request = grant
-            self.flush_done_callback = flush_done_callback
-            return False
+      total_len = sum(e[2]+13 for e in bpo)
+      if (not total_len):
+         return
+      
+      buf = bytearray(total_len)
+      
+      payload_len = 0
+      def bpo_iter(bpo):
+         nonlocal payload_len
+         i = 0
+         pl = self.bth.piece_length_get()
+         while (bpo):
+            (pi, bs, bl) = bpo.popleft()
+            buf[i:13+i] = struct.pack('>LBLL', (bl+9), self.MSG_ID_PIECE, pi, bs)
+            msg_len = 13 + bl
+            payload_len += bl
+            yield (pl*pi + bs, memoryview(buf)[i+13:i+msg_len])
+            i += msg_len
+         raise StopIteration()
+      
+      req = self.bth.bt_disk_io.async_readinto(bpo_iter(bpo),
+         self._send_block)
+      bpo.clear()
+      req.buf = buf
+      req.payload_len = payload_len
 
-      self.flush_done_callback = None
-      return True
+   def _output_write(self, *args, **kwargs):
+      AsyncDataStream._output_write(self, *args, **kwargs)
+      if ((not self._outbuf) and self.uploading):
+         self.read_blocks()
 
-   # general-purpose internal methods
-   def data_flush_callback(self, bandwidth_request, bytes_granted, request_done):
-      """Send at most <bytes> bytes of buffered data down the protocol stack"""
-      assert (len(self.bt_buffer_output) >= bytes_granted)
-      self.send_bytes((self.bt_buffer_output[:bytes_granted],))
-      self.ts_traffic_last_out = time.time()
-      
-      self.bt_buffer_output = bytearray(self.bt_buffer_output[bytes_granted:])
-      
-      if (request_done):
-         if (self.bt_buffer_output):
-            #self.bandwidth_manager_out.bandwidth_take(len(self.bt_buffer_output))
-            self.send_bytes((self.bt_buffer_output,))
-            self.ts_traffic_last_out = time.time()
-         self.bandwidth_request = None
-         if not (self.flush_done_callback is None):
-            self.flush_done_callback(self)
-            self.flush_done_callback = None
+   def _send_block(self, io_req):
+      """Push blocks read from hd out to network"""
+      if not (self):
+         return
+      if (io_req.failed):
+         self.log2('{0} closing because of failure of IO request {1}.'.format(
+            self, io_req))
+         self.close()
+         return
+      self.content_bytes_out += io_req.payload_len
+      self.send_data_bt(io_req.buf)
 
    # internal methods: sending data to peer
-   def send_data_bt(self, data, fd=None, bw_count=True, buffering_force=False, **kwargs):
+   def send_data_bt(self, data, bw_count=True, buffering_force=False, **kwargs):
       """Send data if no data buffered at bt layer, otherwise buffer it"""
       if (self.data_auto_encrypt):
          data = self.data_auto_encrypt(data)
@@ -1102,7 +1102,9 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       del(in_data)
       self._discard_inbt_data(in_data_sio.tell())
       self._wait_n_bytes(msg_len + 4)
-   
+      if (self.uploading):
+         self.read_blocks()
+      
    #BT Protocol v1.0 message handlers
    def input_process_choke(self, data_sio, payload_len):
       """Process CHOKE message"""
@@ -1350,149 +1352,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    }
 
 
-class BTDiskIO:
-   """File like object for accessing the set of files targeted by one torrent"""
-   logger = logging.getLogger('BTDiskIO')
-   log = logger.log
-   hash_helper = sha1
-   
-   def __init__(self, metainfo, basedir, basename_use=True):
-      """Initialize instance with metainfo data.
-      
-      All files in metainfo.files should be closed, and will be opened as part
-      of initialization.
-      """
-      # Ensure that the user hasn't asked several instances to work
-      # with the same files in parallel.
-      self.metainfo = metainfo
-      self.files = metainfo.files
-      self.length = sum([file.length for file in metainfo.files])
-      self.piece_max = len(metainfo.piece_hashes) - 1
-      
-      if (basename_use):
-         basedir_in = basedir
-         basedir = os.path.normpath(os.path.join(basedir, metainfo.basename))
-         if not (os.path.abspath(basedir).startswith(os.path.abspath(basedir_in))):
-            raise BTClientError("Basename {0!a} retrieved from {1} by {2} isn't safe to use.".format(metainfo.basename, metainfo, self))
-      self.basedir = basedir
-      
-      if not (os.path.exists(basedir)):
-         self.log(12, "Targetdirectory {0!a} doesn't exist; creating it.".format(basedir))
-         os.mkdir(basedir)
-      
-      files_processed = []
-      try:
-         for btfile in self.files:
-            if (btfile.get_openness()):
-               raise BTCStateError('BTFile {0} is already open.'.format(btfile))
-            btfile.file_open(basedir)
-            files_processed.append(btfile)
-      except Exception:
-         # If something went wrong, don't leave processed files newly opened
-         for btfile in files_processed:
-            btfile.file_close()
-         raise
-      
-      self.file_index = 0
-      self.file_index_max = (len(self.files) - 1)
-   
-   def seek(self, index, whence=0):
-      """Seek to specified position in torrent content"""
-      if not (0 <= whence <= 2):
-         raise ValueError('Value {0!a} for argument whence is invalid.'.format(whence))
-      if (whence == 0):
-         self.file_index = 0
-      elif (whence == 2):
-         self.file_index = self.file_index_max
-      
-      if (index > 0):
-         # seeking forward
-         whence = 0
-         index_mod = 1
-      elif (index < 0):
-         # seeking backward
-         whence = 2
-         index_mod = -1
-      
-      btfile = self.files[self.file_index]
-      while (index != 0):
-         if (btfile.length > index):
-            btfile.file.seek(index, whence)
-            return
-         if not (0 <= self.file_index <= self.file_index_max):
-            raise BTFileError('Seeked beyond end of block.')
-         
-         index -= index_mod * btfile.length
-         self.file_index += index_mod
-         btfile = self.files[self.file_index]
-      # Regular loop termination, need to seek to relevant end of current file
-      btfile.file.seek(0, whence)
-
-   def piece_hash(self, index):
-      """Return hash of piece with index <index>."""
-      length = self.metainfo.piece_length
-      self.seek(length * index)
-      if (index == self.piece_max):
-         # the last piece may be irregular in size
-         length = self.length - (length * (self.piece_max))
-
-      data = self.read(length)
-      assert (len(data) == length)
-      return self.hash_helper(data).digest()
-
-   def write(self, data):
-      """Write data. This is a thin wrapper around write_fromstream()."""
-      self.write_fromstream(BytesIO(data), len(data))
-   
-   def read(self, length):
-      """Read exactly <length> bytes of data from torrent content and return it as a bytearray"""
-      rv = bytearray(length)
-      while (length >= 0):
-         target = self.files[self.file_index]
-         len_read = min(target.length - target.file.tell(), length)
-         if (len_read > 0):
-            data = target.file.read(len_read)
-            if (len(data) != len_read):
-               raise BTFileError('Reading outside of written domain')
-            # The case [-x:0] is special, in that differently from [-x:-y] it
-            # will append to the end of the array; the right thing to do to
-            # overwrite a suffix in place is use [-x:None].
-            rv[-length:(-length + len_read) or None] = data
-            length -= len_read
-            if (length <= 0):
-               break
-         
-         if (self.file_index >= self.file_index_max):
-            raise BTFileError('Reading outside of content length.')
-         self.file_index += 1
-         self.files[self.file_index].file.seek(0)
-
-      return rv
-      
-   def write_fromstream(self, stream, length):
-      """Read <length> bytes from stream and write to torrent content"""
-      while (length >= 0):
-         target = self.files[self.file_index]
-         len_write = min(target.length - target.file.tell(), length)
-         if (len_write > 0):
-            data = stream.read(len_write)
-            if (len(data) != len_write):
-               raise IOError('Unable to read {0} more bytes from stream {1!a}.'.format(len_write, stream))
-            target.file.write(data)
-            length -= len_write
-            if (length <= 0):
-               break
-         if (self.file_index >= self.file_index_max):
-            raise BTFileError('Writing outside of content length.')
-         self.file_index += 1
-         self.files[self.file_index].file.seek(0)
-
-   def close(self):
-      """Close backing files"""
-      for file in self.files:
-         file.file_close()
-
-
 class BTorrentHandler:
    """Manage downloading/seeding a single BT file"""
    block_length = 16*1024
@@ -1583,13 +1442,11 @@ class BTorrentHandler:
       self.piece_count = len(self.metainfo.piece_hashes)
       self.init_started = False
       self.init_done = False
-      self.init_piece_next = None
       self.uploading = True
       self.downloader_count = downloader_count
       self.optimistic_unchoke_count = int(math.ceil(downloader_count*self.optimistic_unchoke_rate))
       self.downloaders = []
       self.downloaders_index = 0
-      self.downloader_active = None
       self.senders = set()
       # generic traffic statistics; note that these only refer to finished connections
       self.content_bytes_in = content_bytes_in
@@ -1603,7 +1460,6 @@ class BTorrentHandler:
       # whether we are expecting to be sent that block by a peer
       self.blockmask_req = BlockMask(self.piece_count, self.piece_length_get(False), self.piece_length_get(True), self.block_length)
       
-      self.chunk_upload_bandwidth_req = None
       self.pieces_availability = [0]*self.piece_count
       self.pieces_preference = ()
       self.bli_cls = bli_cls
@@ -1644,7 +1500,8 @@ class BTorrentHandler:
       self.event_dispatcher = event_dispatcher
       self.port = port
       
-      self.bt_disk_io = BTDiskIO(self.metainfo, basepath, basename_use=self.basename_use)
+      self.bt_disk_io = BTDiskIO(self.event_dispatcher, self.metainfo, basepath,
+         basename_use=self.basename_use)
       if (self.piecemask):
          assert(self.piecemask.bitlen) == len(self.metainfo.piece_hashes)
       else:
@@ -1656,10 +1513,14 @@ class BTorrentHandler:
       self.bandwidth_logger_out = self.bandwidth_manager_out = \
          self.bmo_cls(self.event_dispatcher, cycle_length=self.bwm_cycle_length,
          history_length=self.bwm_history_length)
-
-      self.init_piece_next = 0
-      self.piecemask_validation_perform()
       
+      if (self.piecemask_validate):
+         self.piecemask_validation_perform()
+      else:
+         self.pieces_have_count = self.piecemask.bits_set_count()
+         self.download_complete = (self.pieces_have_count == self.piece_count)
+         self.io_init_finish()
+   
    def io_init_finish(self):
       """Finish IO initialization sequence.
          Should be called after piecemask validation (if any) is completed"""
@@ -1709,57 +1570,61 @@ class BTorrentHandler:
       kwargs = state
       self.__init__(**kwargs)
    
-   def piecemask_validation_perform(self, index=0):
+   def piecemask_validation_perform(self, req=None):
       """Check whether allegedly present data hashes to the correct value"""
-      if (index == 0):
+      piece_len = self.piece_length_get(False)
+      if (req is None):
          self.bytes_left = self.metainfo.length_total
          self.log(22, '{0} is starting validation of previously downloaded data.'.format(self))
-      end_time = time.time() + self.block_time
+         blen = 1048576
+         blen -= (blen % piece_len)
+         if (not blen):
+            blen = piece_len
+         
+         buf = bytearray(min(blen, self.metainfo.length_total))
+         req = self.bt_disk_io.async_readinto(((0,buf),), self.piecemask_validation_perform)
+         req.buf = buf
+         req.blen = blen
+         req.index = 0
+         return
       
-      done = False
-      piece_max = self.piecemask.bitlen - 1
-      
-      while (index < self.piecemask.bitlen):
-         if (self.piecemask.bit_get(index)):
-            if (self.piecemask_validate):
-               try:
-                  hd_hash = self.bt_disk_io.piece_hash(index)
-               except BTFileError:
-                  self.log(25, 'Piece {0} of {1} was supposed to be present, but lies outside of written data.'.format(index, self))
-                  self.piecemask.bit_set(index, False)
-               else:
-                  if (self.metainfo.piece_hashes[index] != hd_hash):
-                     self.log(25, 'Piece {0} of {1} was supposed to be present, but hd content hashed to {2!a}, while expected hash was {3!a}.'.format(index, self, hd_hash, self.metainfo.piece_hashes[index]))
-                     self.piecemask.bit_set(index, False)
-                  else:
-                     self.pieces_have_count += 1
-                     self.bytes_left -= self.metainfo.piece_length
-                  
+      buf = memoryview(req.buf)
+      i = req.index
+      o = 0
+      while (len(buf) > o):
+         m = buf[o:o+piece_len]
+         if (self.piecemask.bit_get(i)):
+            h = sha1(m).digest()
+            if (self.metainfo.piece_hashes[i] != h):
+               # We don't explicitly check for failed reads; the somewhat nicer
+               # log messages aren't worth the additional complexity.
+               self.log(25, 'Piece {0} of {1} was supposed to be present, but hd'
+                   'content (if present) hashed to {2!a}, while expected hash was'
+                   '{3!a}.'.format(i, self, h, self.metainfo.piece_hashes[i]))
             else:
                self.pieces_have_count += 1
-               self.bytes_left -= self.metainfo.piece_length
-         index += 1
-         
-         if (end_time <= time.time()):
-            break
-      else:
-         done = True
+         o += len(m)
+         i += 1
       
-      if (done):
+      self.bytes_left -= len(buf)
+      
+      if (self.bytes_left <= 0):
          self.log(22, '{0} has finished validation of previously downloaded data.'.format(self))
-         if ((self.piecemask.bitlen > 0) and self.piecemask.bit_get(index - 1)):
+         if ((self.piecemask.bitlen > 0) and self.piecemask.bit_get(i - 1)):
             # Last piece was valid. Correct self.bytes_left back up
             self.bytes_left += (self.metainfo.piece_length - self.piece_length_get(True))
          assert (self.bytes_left >= 0)
          
          self.io_init_finish()
-         self.init_piece_next = None
-         self.timer_init = None
          self.download_complete = (self.pieces_have_count == self.piece_count)
-      else:
-         # Hand control back to the main loop for a moment
-         self.init_piece_next = index
-         self.timer_init = self.event_dispatcher.set_timer(0, self.piecemask_validation_perform, args=(index,), parent=self, persist=False)
+         return
+      
+      buf = bytearray(min(req.blen, self.bytes_left))
+      
+      req_new = self.bt_disk_io.async_readinto(((piece_len*i,buf),), self.piecemask_validation_perform)
+      req_new.buf = buf
+      req_new.blen = req.blen
+      req_new.index = i
       
    def piece_length_get(self, piece_last=False):
       """Return piece_length (in bytes) for this torrent"""
@@ -1868,43 +1733,69 @@ class BTorrentHandler:
          else:
             raise BTClientError("I already have piece {0}, block {1} for connection {2}, and am not in endgame mode.".format(piece_index, block_index, self))
       
-      self.bt_disk_io.seek(piece_index*self.piece_length_get() + start)
-      self.bt_disk_io.write_fromstream(stream, length)
+      req = self.bt_disk_io.async_write(((piece_index*self.piece_length_get() + start,
+         stream.read(length)),), self._block_write_process)
+      req.bth_piece = piece_index
+      req.bth_block = block_index
+      req.bth_length = length
+      
+   def _block_write_process(self, req):
+      """Process write finish"""
+      piece_index = req.bth_piece
+      block_index = req.bth_block
+      block_length = req.bth_length
+      if (self.blockmask.block_have_get(piece_index, block_index)):
+         # Writing race condition
+         self.log(30, '{0} not writing p{1} s{2} l{3} because we already have'
+            'it.'.format(self, piece_index, start, block_length))
+         return
+      
       self.blockmask.block_have_set(piece_index, block_index, True)
       
       if (self.blockmask.piece_have_completely_get(piece_index)):
          # This is the last block of this piece we were missing. Do hash verification.
-         mi_piece_hash = self.metainfo.piece_hashes[piece_index]
-         di_piece_hash = self.bt_disk_io.piece_hash(piece_index)
-         if (di_piece_hash != mi_piece_hash):
-            # Unfortunately we don't know which block(s) were bad, so we can't
-            # do client banning based on this.
-            self.log(35, 'Piece {0} of torrent {1} invalid; got data with hash {2!a}, expected {3!a}. Discarding data.'.format(piece_index, self, di_piece_hash, mi_piece_hash))
-            
-            if (piece_index == (self.piece_count - 1)):
-               subrange = range(self.blockmask.blocks_per_piece_last)
-            else:
-               subrange = range(self.blockmask.blocks_per_piece)
-               
-            for block_index in subrange:
-               self.blockmask.block_have_set(piece_index, block_index, False)
+         buf = bytearray(self.piece_length_get(piece_index == (self.piece_count - 1)))
+         req_new = self.bt_disk_io.async_read(((piece_index*self.piece_length_get(),
+            buf),), self._piece_verify)
+         req_new.buf = buf
+         req_neq.bth_index = piece_index
+   
+   def _piece_verify(self, req):
+      """Verify hash of potentially completed piece"""
+      piece_index = req.bth_index
+      
+      mi_piece_hash = self.metainfo.piece_hashes[piece_index]
+      di_piece_hash = sha1(req.buf).digest()
+      
+      if (di_piece_hash != mi_piece_hash):
+         # Unfortunately we don't know which block(s) were bad, so we can't
+         # do client banning based on this.
+         self.log(35, 'Piece {0} of torrent {1} invalid; got data with hash {2!a}, expected {3!a}. Discarding data.'.format(piece_index, self, di_piece_hash, mi_piece_hash))
+         
+         if (piece_index == (self.piece_count - 1)):
+            subrange = range(self.blockmask.blocks_per_piece_last)
          else:
-            self.log(14, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
-            self.piecemask.bit_set(piece_index, True)
-            self.pieces_have_count += 1
-            self.bytes_left -= piece_length
-            assert (self.bytes_left >= 0)
-            for conn in self.peer_connections.copy():
-               conn.piece_have_new(piece_index)
-            
-            if (self.pieces_have_count == self.piecemask.bitlen):
-               self.log(28, 'Completed torrent {0}; {1} bytes in {2} pieces.'.format(self, self.metainfo.length_total, self.piecemask.bitlen))
-               self.download_complete = True
-               self.ts_downloading_finish = datetime.datetime.now()
-               for conn in self.peer_connections.copy():
-                  conn.downloading = False
+            subrange = range(self.blockmask.blocks_per_piece)
+         
+         for block_index in subrange:
+            self.blockmask.block_have_set(piece_index, block_index, False)
+         return
+      
+      self.log(14, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
+      self.piecemask.bit_set(piece_index, True)
+      self.pieces_have_count += 1
+      self.bytes_left -= piece_length
+      assert (self.bytes_left >= 0)
+      for conn in self.peer_connections.copy():
+         conn.piece_have_new(piece_index)
+      
+      if (self.pieces_have_count == self.piecemask.bitlen):
+         self.log(28, 'Completed torrent {0}; {1} bytes in {2} pieces.'.format(self, self.metainfo.length_total, self.piecemask.bitlen))
+         self.download_complete = True
+         self.ts_downloading_finish = datetime.datetime.now()
+         for conn in self.peer_connections.copy():
+            conn.downloading = False
 
-         return True
 
    def block_request_process(self, conn):
       """Process block request on one of our connections"""
@@ -1915,48 +1806,6 @@ class BTorrentHandler:
          return
       if (not conn.uploading):
          self.downloaders_update(discard_optimistic_unchokes=False)
-      
-      self.chunk_upload()
-
-   def chunk_upload(self, conn=None):
-      """Request bandwidth from bandwidth_manager_out and use it to have uploading
-         connections send chunks to peers"""
-      assert ((conn is None) or (conn is self.downloader_active))
-      
-      if (not self.active):
-         return
-      
-      if (not self.downloaders):
-         return
-      
-      if not (None is self.downloader_active):
-         raise NotImplementedError()
-      
-      self.downloader_active = None
-      skipped = 0
-      while (skipped < len(self.downloaders)):
-         conn = self.downloaders[self.downloaders_index]
-         if (not conn.blocks_pending_out):
-            # Nothing to output.
-            skipped += 1
-            self.downloaders_index = (self.downloaders_index + 1) % len(self.downloaders)
-            continue
-         rv = conn.block_send_buffer(self.chunk_upload)
-         
-         # The preceding call may have caused a connection close, and in that
-         # event the total amount of downloaders may have fallen to zero.
-         if not (rv is True):
-            # Send delayed; will call us back when done
-            self.downloader_active = conn
-            break
-         else:
-            skipped = 0
-         
-         if (self.downloaders):
-            self.downloaders_index = (self.downloaders_index + 1) % len(self.downloaders)
-         else:
-            self.downloaders_index = 0
-            break
 
 
    def downloaders_update(self, discard_optimistic_unchokes=True):
@@ -2057,8 +1906,8 @@ class BTorrentHandler:
          conn.maintenance_perform()
       
       self.downloaders_update()
-      if (self.downloader_active is None):
-         self.chunk_upload()
+      for conn in self.downloaders:
+         conn.read_blocks(force=True)
       
    def peer_connections_start(self):
       """Connect to more peers if we don't have sufficient connections yet."""
@@ -2220,9 +2069,6 @@ class BTorrentHandler:
          else:
             self.downloaders_index = 0
          self.downloaders_update(discard_optimistic_unchokes=False)
-      if (conn is self.downloader_active):
-         self.downloader_active = None
-         self.chunk_upload()
       
    def close(self):
       if (self.active):

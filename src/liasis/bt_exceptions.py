@@ -20,3 +20,12 @@
 
 class BTClientError(Exception):
    pass
+
+class BTCStateError(BTClientError):
+   pass
+
+class HandlerNotReadyError(BTCStateError):
+   pass
+
+class BTFileError(BTClientError):
+   pass

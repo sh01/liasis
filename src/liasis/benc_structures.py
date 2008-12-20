@@ -352,10 +352,11 @@ class BTTargetFile:
    def file_open(self, basedir, bufsize=4096, mkdirs=True, lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
       assert (self.file is None)
       path = os.path.normpath(os.path.join(basedir, self.path))
-      if not (os.path.abspath(path).startswith(os.path.abspath(basedir))):
+      ap = os.path.abspath(path)
+      if not (ap.startswith(os.path.abspath(basedir))):
          raise BTClientError("Filepath {0!a} of {1} isn't safe to open.".format(path, self))
       
-      pathdir = os.path.dirname(path)
+      pathdir = os.path.dirname(ap)
       if (not os.path.exists(pathdir)):
          os.makedirs(pathdir)
       if (os.path.exists(path)):
@@ -368,7 +369,11 @@ class BTTargetFile:
       else:
          mode = 'w+b'
 
-      self.file = open(path, mode, bufsize)
+      self.file = open(ap, mode, bufsize)
+      self.file.seek(self.length-1)
+      if (not self.file.peek(0)):
+         self.file.write(b'\x00')
+      self.file.seek(0)
       fcntl.lockf(self.file.fileno(), lock_op)
    
    def file_close(self):
