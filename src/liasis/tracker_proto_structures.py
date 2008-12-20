@@ -245,7 +245,7 @@ class UDPTrackerRequest(TrackerRequest):
       if (len(data) != 8):
          raise ValueError('Data {0!a} invalid; expected exactly 8 bytes.'.format(data,))
       return struct.unpack('>q', data)[0]
-    
+   
    @staticmethod
    def frame_parsebody_announce(data):
       """Parse announce response body (packet minus initial 8 bytes) and return contents"""
@@ -260,13 +260,13 @@ class UDPTrackerRequest(TrackerRequest):
       for peer in peers:
          if ((int(peer.ip) == 0) or (peer.port == 0)):
             raise ValueError('Invalid BTPeer data {0!a}.'.format(peer,))
-       
+      
       # Build response data manually, since it doesn't exist at protocol level
       response_data = {
-         'peers': peers,
-         'interval':interval,
-         'complete':seeders,
-         'incomplete':leechers
+         b'peers': peers,
+         b'interval':interval,
+         b'complete':seeders,
+         b'incomplete':leechers
          }
       return response_data
    
@@ -307,7 +307,7 @@ class UDPTrackerRequest(TrackerRequest):
       ACTION_ERROR:frame_process_error
    }
     
-   def frame_process(self, source, data):
+   def frame_process(self, data, source):
       """Process UDP frame received from tracker"""
       if (source != self.tracker_address):
          # Not what we're expecting.
@@ -341,20 +341,23 @@ class UDPTrackerRequest(TrackerRequest):
       self.result_callback = result_callback
       self.error_callback = error_callback
       
-      self.sock = event_dispatcher.SockDatagram(input_handler=self.frame_process)
-      self.sock.connection_init()
+      rsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      
+      self.sock = AsyncPacketSock(event_dispatcher, rsock)
+      self.sock.process_input = self.frame_process
+      self.sock.process_close = (lambda *args: None)
        
       self.transaction_id = self.tid_generate()
       self.state = 0
       self.tracker_address = (random.choice(socket.getaddrinfo(*self.address_get()))[4])
-       
+      
       self.frame_send(self.frame_build_init())
       
       self.timeout_timer = event_dispatcher.set_timer(self.TIMEOUT, self.timeout_handle)
     
    def close(self):
       """Close socket, if opened, and reset state variables"""
-      if not (self.sock is None):
+      if (self.sock):
          self.sock.close()
          self.sock = None
       if not (self.timeout_timer is None):
