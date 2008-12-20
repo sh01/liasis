@@ -32,7 +32,7 @@ from gonium.posix.signal import SignalCatcher, SA_RESTART
 from liasis.benc_structures import BTMetaInfo
 from liasis import bt_client
 from liasis.bt_client import BTorrentHandler, EABTClient
-from liasis import bandwith_management
+from liasis import bandwidth_management
 from liasis import bt_management
 from liasis import bt_semipermanent_stats # need for btc unpickling
 from liasis.bt_semipermanent_stats import BTStatsTracker
@@ -68,7 +68,7 @@ if (__name__ == '__main__'):
    
    op = optparse.OptionParser(usage='%prog [options] <config_file>')
    op.add_option('--forcenoresume', action="store_false", dest="resume", default=True, help='Do not unpickle BTClient instance saved earlier')
-   op.add_option('-t', '--profile', action="store_true", dest='profile', default=False, help='use hotshot to profile liasis')
+   op.add_option('-t', '--profile', action="store_true", dest='profile', default=False, help='use cProfile to profile liasis')
    op.add_option('--nodaemon', action='store_false', dest='daemon', default=True, help='do not daemonize')
    
    (options, args) = op.parse_args()
@@ -127,10 +127,10 @@ if (__name__ == '__main__'):
       daemon_fork()
    
    if (options.profile):
-      import hotshot
+      import cProfile
       profile_dump_filename = ('liasis_{0}.prof'.format(time.time())).encode('ascii')
       log(20, 'Starting profile mode. Profile is being saved to {0!a}.'.format(profile_dump_filename))
-      profiler = hotshot.Profile(profile_dump_filename, lineevents=1)
+      profiler = cProfile.Profile(profile_dump_filename)
       profiler.runcall(event_dispatcher.event_loop)
       profiler.close()
    else:
