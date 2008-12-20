@@ -129,10 +129,10 @@ if (__name__ == '__main__'):
    if (options.profile):
       import cProfile
       profile_dump_filename = ('liasis_{0}.prof'.format(time.time())).encode('ascii')
-      log(20, 'Starting profile mode. Profile is being saved to {0!a}.'.format(profile_dump_filename))
-      profiler = cProfile.Profile(profile_dump_filename)
+      log(20, 'Starting profile mode. Profile will be saved to {0!a}.'.format(profile_dump_filename))
+      profiler = cProfile.Profile()
       profiler.runcall(event_dispatcher.event_loop)
-      profiler.close()
+      profiler.dump_stats(profile_dump_filename)
    else:
       event_dispatcher.event_loop()
 
