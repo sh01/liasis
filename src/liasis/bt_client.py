@@ -823,10 +823,10 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
    def process_input(self, in_data):
       """Deal with input to our buffers"""
-      if (self.closing):
-         # Never mind. We're in the process of shutting down because of
-         # protocol or internal errors. Trying to process the data
-         # again would most likely just lead to infinite recursion
+      if not (self):
+         # Never mind; connection is dead already.
+         # XXX: Try to do something useful with possibly remaining buffered
+         # PIECE messages?
          return
       
       self.ts_traffic_last_in = time.time()
