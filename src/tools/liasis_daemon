@@ -105,11 +105,11 @@ if (__name__ == '__main__'):
    sc = SignalCatcher(event_dispatcher)
    sc.sighandler_install(signal.SIGTERM, SA_RESTART)
    sc.sighandler_install(signal.SIGINT, SA_RESTART)
-   def handle_signal(si_l):
+   def handle_signals(si_l):
       event_dispatcher.shutdown()
       log(50, 'Shutting down on signal {0}.'.format(si_l[0].signo))
    
-   sc.handle_signal = handle_signal
+   sc.handle_signals = handle_signals
    
    # bt management stuff
    if (btm_config.control_socket_af == socket.AF_UNIX):
