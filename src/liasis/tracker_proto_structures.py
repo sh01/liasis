@@ -197,9 +197,9 @@ class UDPTrackerRequest(TrackerRequest):
    
    EVENT_MAP = {
       None:0,
-      'completed':1,
-      'started':2,
-      'stopped':3
+      b'completed':1,
+      b'started':2,
+      b'stopped':3
    }
    
    def __init__(self, *args, **kwargs):
