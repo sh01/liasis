@@ -32,7 +32,7 @@ from gonium.posix.signal import SignalCatcher, SA_RESTART
 from liasis.benc_structures import BTMetaInfo
 from liasis import bt_client
 from liasis.bt_client import BTorrentHandler, EABTClient
-from liasis import bandwidth_management
+from liasis import bandwith_management
 from liasis import bt_management
 from liasis import bt_semipermanent_stats # need for btc unpickling
 from liasis.bt_semipermanent_stats import BTStatsTracker
@@ -105,9 +105,9 @@ if (__name__ == '__main__'):
    sc = SignalCatcher(event_dispatcher)
    sc.sighandler_install(signal.SIGTERM, SA_RESTART)
    sc.sighandler_install(signal.SIGINT, SA_RESTART)
-   def handle_signal(siginfo):
+   def handle_signal(si_l):
       event_dispatcher.shutdown()
-      log(50, 'Shutting down on signal {0}.'.format(siginfo.signo))
+      log(50, 'Shutting down on signal {0}.'.format(si_l[0].signo))
    
    sc.handle_signal = handle_signal
    
