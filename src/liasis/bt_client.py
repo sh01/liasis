@@ -940,7 +940,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                self.in_buf_plain = None
                
             elif (cm == self.MSE_CM_RC4):
-               self.mse_setup(self.mse_rc4_dec.decrypt, self.mse_rc4_enc.encrypt)
+               self.mse_setup(self.mse_rc4_enc.encrypt, self.mse_rc4_dec.decrypt)
             else:
                # can't happen
                raise ValueError('Unknown chosen crypto method {0}.'.format(cm))
