@@ -349,7 +349,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.handshake_sent = False
       self.piecemask = None   # piece status of peer
       self.sync_done = False
-      self.closing = False # currently running self.close() ?
       self.buffer_input_len = 0
       self.bandwidth_request = None
       self.flush_done_callback = None
@@ -458,7 +457,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def process_close(self, *args, **kwargs):
       """Close connection and disassociate ourselves from BT object tree"""
       self.log2(18, '{0} shutting down'.format(self))
-      self.closing = True
       if not (self.bth is None):
          self.bth.connection_remove(self)
          self.bth.pieces_availability_adjust_mask(self.piecemask, -1)
@@ -479,7 +477,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          self.flush_done_callback()
          self.flush_done_callback = None
          
-      self.closing = False
 
    def uploading_start(self):
       """Allow ourselves to send blocks to peer"""
@@ -578,13 +575,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    # MSE handshakes
    def mse_hss1_send(self):
       """Send MSE handshake sequence 1 / 2 to peer"""
-      if (self.closing):
+      if (not self):
          return
       self.send_data_bt(self.mse_i2s(self.mse_key_pub_self) + self.pad_str_build(), bw_count=False)
    
    def mse_hss5_send(self, crypto_method, pad=None):
       """Send MSE handshake sequence 5 to peer"""
-      if (self.closing):
+      if (not self):
          return
       if (pad is None):
          pad = self.pad_str_build()
@@ -611,7 +608,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    
    def handshake_send(self):
       """Send handshake to peer"""
-      if (self.closing):
+      if (not self):
          return
       self.send_data_bt(self.handshake_str_get())
       self.handshake_sent = True
@@ -619,14 +616,14 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    # regular BT traffic
    def keepalive_send(self):
       """Send keepalive message to peer"""
-      if (self.closing):
+      if (not self ):
          return
 
       self.send_data_bt(b'\x00\x00\x00\x00')
 
    def msg_send(self, msg_id, payload, bw_count=True, buffering_force=False):
       """Send message with specified msg_id and payload to peer"""
-      if (self.closing):
+      if (not self):
          return
       header = struct.pack('>LB', (len(payload) + 1), msg_id)
       self.send_data_bt(header + payload, bw_count=bw_count, buffering_force=buffering_force)
@@ -784,7 +781,6 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       
    def client_error_process(self):
       """Close connection and report to BTH that this client(?) is broken"""
-      self.closing = True
       if (self.bth):
          self.bth.peer_connection_error_process(self)
 
@@ -1327,7 +1323,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    def __gt__(self, other):
       td = self.traffic_delta_cmp(other)
       return ((td == 1) or ((td == 0) and (id(self) > id(other))))
-   def __gt__(self, other):
+   def __ge__(self, other):
       td = self.traffic_delta_cmp(other)
       return ((td == 1) or ((td == 0) and (id(self) >= id(other))))
 
@@ -1869,8 +1865,10 @@ class BTorrentHandler:
             conn.uploading = True
             conn.uploading_stop(True)
 
-      self.senders = senders
-      self.downloaders = downloaders
+      # Discard connections that where open when we entered this loop, but have
+      # been closed since then because of one of our calls to them.
+      self.senders = set(c for c in senders if (c in self.peer_connections))
+      self.downloaders = [c for c in downloaders if (c in self.peer_connections)]
       
       downloader_count = len(downloaders)
       
@@ -1907,8 +1905,8 @@ class BTorrentHandler:
          conn.maintenance_perform()
       
       self.downloaders_update()
-      for conn in self.downloaders:
-         conn.read_blocks(force=True)
+      #for conn in self.downloaders:
+      #   conn.read_blocks(force=True)
       
    def peer_connections_start(self):
       """Connect to more peers if we don't have sufficient connections yet."""
