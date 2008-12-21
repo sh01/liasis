@@ -867,7 +867,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
                except UnknownTorrentError:
                   self.log(25, "Handshake validation on {0} failed; not tracking torrent with infohash fitting MSE handshake data.".format(self), exc_info=False)
                   self.mse_init = False
-                  self._discard_inbt_data()
+                  self._discard_inbt_data(None)
                   in_data = self._in_data_update()
                   self.close()
                   return
