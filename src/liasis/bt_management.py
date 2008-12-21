@@ -21,7 +21,7 @@ import logging
 from gonium.fdm import AsyncDataStream, AsyncSockServer
 from gonium.event_multiplexing import DSEventAggregator
 
-from .bt_client import EABTClient, peer_id_generate
+from .bt_client import EABTClient
 from . import benc_structures
 from .benc_structures import BTMetaInfo
 from .bt_piecemasks import BitMask
@@ -107,7 +107,7 @@ class BTControlConnection(BTControlConnectionBase, AsyncDataStream):
       if (mi.info_hash in btc.torrents):
          self.msg_send(b'COMMANDNOOP', [cmd] + args)
       else:
-         btc.torrent_add(mi, peer_id=peer_id_generate(), 
+         btc.torrent_add(mi, peer_id=self.btm.peer_id_generator(),
                piecemask_validate=True,
                piecemask=BitMask.build_full(len(mi.piece_hashes)),
                active=active)
@@ -279,7 +279,8 @@ class BTControlConnection(BTControlConnectionBase, AsyncDataStream):
 
 
 class BTManagerBase:
-   def __init__(self, bt_clients=()):
+   def __init__(self, peer_id_generator, bt_clients=()):
+      self.peer_id_generator = peer_id_generator
       self.bt_clients = list(bt_clients)
       self.event_listeners = []
       for btc in bt_clients:
@@ -327,9 +328,10 @@ class BTManagerBase:
 class StreamSockBTManager(BTManagerBase):
    logger = logging.getLogger('StreamSockBTManager')
    log = logger.log
-   def __init__(self, event_dispatcher, address_family, address, backlog=5, bt_clients=(),
-            **kwargs):
-      BTManagerBase.__init__(self, bt_clients=bt_clients, **kwargs)
+   def __init__(self, event_dispatcher, peer_id_generator, address_family,
+         address, backlog=5, bt_clients=(), **kwargs):
+      BTManagerBase.__init__(self, peer_id_generator, bt_clients=bt_clients,
+         **kwargs)
       self.event_dispatcher = event_dispatcher
       self.serv = AsyncSockServer(event_dispatcher, address,
          family=address_family, backlog=backlog)

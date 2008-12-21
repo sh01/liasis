@@ -122,6 +122,7 @@ if (__name__ == '__main__'):
          pass
 
    btm = bt_management.StreamSockBTManager(sa.ed,
+      btm_config.peer_id_generator,
       address_family=btm_config.control_socket_af,
       address=btm_config.control_socket_address, bt_clients=(btc,))
    

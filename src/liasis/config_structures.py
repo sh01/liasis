@@ -17,9 +17,16 @@
 
 """Structures for persistent but non-pickled liasis state"""
 
+import os
+import time
+from hashlib import md5
 from socket import AF_UNIX
 
 from .bt_archiving import BTHPickleDirectoryArchiver
+
+def peer_id_generate():
+   return (b'-LS0000-' + md5('{0}{1}'.format(os.getpid(), time.time()).encode('ascii')).digest())[:20]
+
 
 class ConfigBase:
    _bytes_attributes = ()
@@ -43,6 +50,7 @@ class BTMConfig(ConfigBase):
    """BTManager config value storage class"""
    control_socket_af = AF_UNIX
    control_socket_address = b'liasis_ctl.sock'
+   peer_id_generator = staticmethod(peer_id_generate)
 
 
 class BTCConfig(ConfigBase):

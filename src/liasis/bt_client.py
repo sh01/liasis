@@ -17,6 +17,7 @@
 
 # Central BT client classes.
 
+import copy
 import datetime
 import logging
 import math
@@ -25,7 +26,7 @@ import random
 import struct
 import time
 from collections import deque
-from hashlib import sha1,md5
+from hashlib import sha1
 from io import BytesIO
 
 # python-crypto
@@ -98,8 +99,6 @@ def bmodpow(base, exp, mod):
       
    return rv
 
-def peer_id_generate():
-   return (b'-LS0000-' + md5('{0}{1}'.format(os.getpid(), time.time()).encode('ascii')).digest())[:20]
 
 class ReservedMask:
    EXT_AZUREUS_EM = 2**63
@@ -1860,7 +1859,7 @@ class BTorrentHandler:
          if (conn.p_choked):
             conn.choke_send(False)
       
-      for conn in self.senders:
+      for conn in copy.copy(self.senders):
          if ((not conn in senders) and (not conn in downloaders)):
             conn.uploading = True
             conn.uploading_stop(True)
@@ -2091,7 +2090,6 @@ class BTorrentHandler:
 
 class BTClient:
    """Manage a Bt client socket, and dispatch identified connections on tracked torrents to specific torrent classes"""
-   peer_id = peer_id_generate()
    logger = logging.getLogger('BTClient')
    log = logger.log
    maintenance_interval = MAINTENANCE_INTERVAL
