@@ -1,2 +1,7 @@
 This is the python3.0 version of liasis.
-It's official status is 'broken'. This is a WIP, and not expected to work yet.
+It's official status is 'experimental'. The QT client hasn't been ported yet;
+other components may be missing a few features relative to the last 2.x
+version, but should be mostly functional and stable. They also have some
+features that were never part of any python 2.x liasis version.
+
+Bug reports are welcome.
