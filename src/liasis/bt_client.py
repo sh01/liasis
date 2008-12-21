@@ -48,7 +48,7 @@ from .tracker_proto_structures import tracker_request_build
 from .bandwidth_management import NullBandwidthLimiter, PriorityBandwidthLimiter
 from .bt_client_mirror import BTClientConnectionMirror, BTorrentHandlerMirror, BTClientMirror
 from .bt_semipermanent_stats import BTStatsTracker
-from .diskio import BTDiskIOSync as BTDiskIO
+from .diskio import btdiskio_build
 
 MAINTENANCE_INTERVAL = 100
 
@@ -1496,7 +1496,7 @@ class BTorrentHandler:
       self.event_dispatcher = sa.ed
       self.port = port
       
-      self.bt_disk_io = BTDiskIO(self.sa, self.metainfo, basepath,
+      self.bt_disk_io = btdiskio_build(self.sa, self.metainfo, basepath,
          basename_use=self.basename_use)
       if (self.piecemask):
          assert(self.piecemask.bitlen) == len(self.metainfo.piece_hashes)
