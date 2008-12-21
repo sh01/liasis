@@ -1491,16 +1491,17 @@ class BTorrentHandler:
       return BTorrentHandlerMirror.state_get_from_original(self)
       rv = {}
       
-   def io_start(self, event_dispatcher, basepath, port):
+   def io_start(self, sa, basepath, port):
       """Start IO init sequence: open files on disk, and start piecemask
          validation (if any)"""
       assert not (self.init_started)
       assert not (self.init_done)
       self.init_started = True
-      self.event_dispatcher = event_dispatcher
+      self.sa = sa
+      self.event_dispatcher = sa.ed
       self.port = port
       
-      self.bt_disk_io = BTDiskIO(self.event_dispatcher, self.metainfo, basepath,
+      self.bt_disk_io = BTDiskIO(self.sa, self.metainfo, basepath,
          basename_use=self.basename_use)
       if (self.piecemask):
          assert(self.piecemask.bitlen) == len(self.metainfo.piece_hashes)
@@ -2097,6 +2098,7 @@ class BTClient:
    log = logger.log
    maintenance_interval = MAINTENANCE_INTERVAL
    def __init__(self, bth_archiver=None, *args):
+      self.sa = None
       self.event_dispatcher = None
       self.torrents = {}
       self.torrent_infohashes = []
@@ -2129,13 +2131,14 @@ class BTClient:
       """Summarize internal state using nested dicts, lists, ints and strings"""
       return BTClientMirror.state_get_from_original(self)
    
-   def connections_start(self, event_dispatcher, btc_config):
+   def connections_start(self, sa, btc_config):
       """Open server socket and call io_start() on all inactive BTHs"""
       assert (self.server is None)
       btc_config.config_use(self)
       
       self.data_basepath = btc_config.data_basepath
-      self.event_dispatcher = event_dispatcher
+      self.sa = sa
+      self.event_dispatcher = sa.ed
       self.bandwidth_logger_in = NullBandwidthLimiter(self.event_dispatcher,
          cycle_length=self.bwm_cycle_length, 
          history_length=self.bwm_history_length)
@@ -2150,7 +2153,7 @@ class BTClient:
       
       for bth in self.torrents.values():
          if not (bth.init_started):
-            bth.io_start(self.event_dispatcher, self.data_basepath, self.port)
+            bth.io_start(sa, self.data_basepath, self.port)
    
    def bths_reannounce_tracker(self):
       """Tell each active BTH managed by this instance to send an announce to their tracker"""
@@ -2205,7 +2208,7 @@ class BTClient:
       self.torrent_infohashes_update()
       self.em_bth_add(self, metainfo.info_hash)
       if not (self.event_dispatcher is None):
-         bth.io_start(self.event_dispatcher, self.data_basepath, self.port)
+         bth.io_start(self.sa, self.data_basepath, self.port)
       
       return bth
 

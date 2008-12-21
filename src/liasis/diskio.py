@@ -18,6 +18,10 @@
 import logging
 import os
 from collections import deque, Callable
+try:
+   from gonium.posix.aio import EAIOManager
+except:
+   EAIOManager = None
 
 from hashlib import sha1
 
@@ -41,10 +45,8 @@ class BTDiskIORequest:
          self.callback(self)
 
 
-class BTDiskIOSync:
-   """File like object for accessing the set of files targeted by one torrent"""
-   
-   def __init__(self, ed, metainfo, basedir, basename_use=True):
+class BTDiskBase:
+   def __init__(self, sa, metainfo, basedir, basename_use=True):
       """Initialize instance with metainfo data.
       
       All files in metainfo.files should be closed, and will be opened as part
@@ -52,7 +54,7 @@ class BTDiskIOSync:
       """
       # Ensure that the user hasn't asked several instances to work
       # with the same files in parallel.
-      self._ed = ed
+      self._sa = sa
       self.metainfo = metainfo
       self.files = metainfo.files
       self.length = sum([file.length for file in metainfo.files])
@@ -110,6 +112,14 @@ class BTDiskIOSync:
          raise BTFileError('Access violates file domain.')
       return rv
 
+   def close(self):
+      """Close backing files"""
+      for file in self.files:
+         file.file_close()
+
+
+class BTDiskIOSync(BTDiskBase):
+   """File like object for accessing the set of files targeted by one torrent"""
    def async_write(self, req_s:(int,memoryview), callback:Callable) -> BTDiskIORequest:
       """Write data at offset."""
       req = BTDiskIORequest(1, callback)
@@ -132,7 +142,7 @@ class BTDiskIOSync:
          else:
             assert(i == len(buf))
       
-      self._ed.set_timer(0,req._process_result,args=(None,))
+      self._sa.ed.set_timer(0,req._process_result,args=(None,))
       return req
    
    def async_readinto(self, req_s:(int,memoryview), callback:Callable) -> BTDiskIORequest:
@@ -157,18 +167,14 @@ class BTDiskIOSync:
          else:
             assert(i == len(buf))
       
-      self._ed.set_timer(0, req._process_result, args=(None,))
+      self._sa.ed.set_timer(0, req._process_result, args=(None,))
       return req
    
-   def close(self):
-      """Close backing files"""
-      for file in self.files:
-         file.file_close()
 
 
 def _selftest():
    import struct
-   from gonium.fdm import ED_get
+   from gonium.service_aggregation import ServiceAggregate
    from collections import namedtuple
    from .benc_structures import BTTargetFile
    CHUNKLEN = 4
@@ -183,54 +189,54 @@ def _selftest():
       fn_data.append((flen_s[i], '__liasis_dio.test.{0}.tmp'.format(i).encode('ascii')))
    
    DMI = namedtuple('DummyMetaInfo', ('files','basename'))
-   
    dmi = DMI([BTTargetFile(fn,fs) for (fs,fn) in fn_data], b'.')
+   sa = ServiceAggregate()
    
-   ed = ED_get()()
+   for btdio_cls in (BTDiskIOSync,):
+      print('== Testing {0} =='.format(btdio_cls))
+      btdio = BTDiskIOSync(sa, dmi, b'.')
    
-   btdio = BTDiskIOSync(ed, dmi, b'.')
+      def sd(*args, **kwargs):
+         sa.ed.shutdown()
    
-   def sd(*args, **kwargs):
-      ed.shutdown()
+      print('=== Test: Writing data ===')
+      chunks_write = [(i*CHUNKLEN, struct.pack('>L', i) + b'\x00'*(CHUNKLEN-4)) for i in range(chunkcount)]
+      btdio.async_write(chunks_write, sd)
+      sa.ed.event_loop()
    
-   print('== Test: Writing data ==')
-   chunks_write = [(i*CHUNKLEN, struct.pack('>L', i) + b'\x00'*(CHUNKLEN-4)) for i in range(chunkcount)]
-   btdio.async_write(chunks_write, sd)
-   ed.event_loop()
+      for f in (btf.file for btf in dmi.files):
+         f.seek(0)
+      buf = b''
+      i = 0
    
-   for f in (btf.file for btf in dmi.files):
-      f.seek(0)
-   buf = b''
-   i = 0
+      for f in (btf.file for btf in dmi.files):
+         while (True):
+            buf += f.read(CHUNKLEN-len(buf))
+            if (len(buf) < CHUNKLEN):
+               break
+            (val,) = struct.unpack('>L',buf[:4])
+            if (val != i):
+               raise ValueError('Chunk {0} has data {1}.'.format(i, buf))
+            i += 1
+            buf = b''
    
-   for f in (btf.file for btf in dmi.files):
-      while (True):
-         buf += f.read(CHUNKLEN-len(buf))
-         if (len(buf) < CHUNKLEN):
-            break
-         (val,) = struct.unpack('>L',buf[:4])
-         if (val != i):
-            raise ValueError('Chunk {0} has data {1}.'.format(i, buf))
-         i += 1
-         buf = b''
+      print('=== Verifying written data ===')
+      print('...passed.')
    
-   print('== Verifying written data ==')
-   print('...passed.')
+      chunks_read = [(i*CHUNKLEN, bytearray(CHUNKLEN)) for i in range(chunkcount)]
+      print('=== Test: Reading data ===')
+      btdio.async_readinto(chunks_read, sd)
+      sa.ed.event_loop()
+      for i in range(chunkcount):
+          (val,) = struct.unpack('>L', chunks_read[i][1][:4])
+          if (val != i):
+             raise ValueError('BTDiskIO delivered data {0} for chunk {1}.'.format(chunks_read[i][1], i))
    
-   chunks_read = [(i*CHUNKLEN, bytearray(CHUNKLEN)) for i in range(chunkcount)]
-   print('== Test: Reading data ==')
-   btdio.async_readinto(chunks_read, sd)
-   ed.event_loop()
-   for i in range(chunkcount):
-       (val,) = struct.unpack('>L', chunks_read[i][1][:4])
-       if (val != i):
-          raise ValueError('BTDiskIO delivered data {0} for chunk {1}.'.format(chunks_read[i][1], i))
-   
-   print('...passed')
+      print('...passed')
    print('== cleaning up ==')
    for fnd in fn_data:
       os.remove(fnd[1])
    
-   
+
 if (__name__ == '__main__'):
    _selftest()

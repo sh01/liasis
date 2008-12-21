@@ -28,6 +28,7 @@ import signal
 from gonium.daemon import daemon_fork
 from gonium.fdm import ED_get
 from gonium.posix.signal import SignalCatcher, SA_RESTART
+from gonium.service_aggregation import ServiceAggregate
 
 from liasis.benc_structures import BTMetaInfo
 from liasis import bt_client
@@ -60,7 +61,6 @@ if (__name__ == '__main__'):
       sys.exit()
       os.abort()
    
-   EventDispatcher = ED_get()
    
    logger = logging.getLogger()
    log = logger.log
@@ -97,19 +97,21 @@ if (__name__ == '__main__'):
    
    pickler = FileNamePickler(daemon_config.pickle_filename)
    
-   event_dispatcher = EventDispatcher()
+   sa = ServiceAggregate()
    
-   btc.connections_start(event_dispatcher, btc_config)
+   btc.connections_start(sa, btc_config)
    btc.pickling_shedule(pickler)
    
-   sc = SignalCatcher(event_dispatcher)
-   sc.sighandler_install(signal.SIGTERM, SA_RESTART)
-   sc.sighandler_install(signal.SIGINT, SA_RESTART)
+   sa.sc.sighandler_install(signal.SIGTERM, SA_RESTART)
+   sa.sc.sighandler_install(signal.SIGINT, SA_RESTART)
    def handle_signals(si_l):
-      event_dispatcher.shutdown()
-      log(50, 'Shutting down on signal {0}.'.format(si_l[0].signo))
+      for si in si_l:
+         if ((si.signo == signal.SIGTERM) or (si.signo == signal.SIGINT)):
+            sa.ed.shutdown()
+            log(50, 'Shutting down on signal {0}.'.format(si.signo))
+            break
    
-   sc.handle_signals = handle_signals
+   sa.sc.handle_signals.new_listener(handle_signals)
    
    # bt management stuff
    if (btm_config.control_socket_af == socket.AF_UNIX):
@@ -119,7 +121,7 @@ if (__name__ == '__main__'):
       except OSError:
          pass
 
-   btm = bt_management.StreamSockBTManager(event_dispatcher,
+   btm = bt_management.StreamSockBTManager(sa.ed,
       address_family=btm_config.control_socket_af,
       address=btm_config.control_socket_address, bt_clients=(btc,))
    
@@ -131,9 +133,9 @@ if (__name__ == '__main__'):
       profile_dump_filename = ('liasis_{0}.prof'.format(time.time())).encode('ascii')
       log(20, 'Starting profile mode. Profile will be saved to {0!a}.'.format(profile_dump_filename))
       profiler = cProfile.Profile()
-      profiler.runcall(event_dispatcher.event_loop)
+      profiler.runcall(sa.ed.event_loop)
       profiler.dump_stats(profile_dump_filename)
    else:
-      event_dispatcher.event_loop()
+      sa.ed.event_loop()
 
 
