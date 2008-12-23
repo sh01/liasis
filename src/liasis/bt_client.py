@@ -1082,7 +1082,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          try:
             input_handler(self, in_data_sio, msg_len-1)
          except (BTClientError, ValueError, struct.error, AssertionError) as exc:
-            self.log(30, 'Exception {0!a} on connection peer {1!a}. Buffered data {2!a}. Closing connection and discarding peer. Exception:'.format(str(exc), self.btpeer, bytes(in_data)), exc_info=isinstance(exc, (AssertionError, BTClientError)))
+            self.log(30, 'Exception {0!a} on connection peer {1!a}. Closing connection and discarding peer. Exception:'.format(str(exc), self.btpeer), exc_info=isinstance(exc, (AssertionError, BTClientError)))
             self.client_error_process()
             return
          
@@ -1602,12 +1602,11 @@ class BTorrentHandler:
                self.piecemask.bit_set(i, False)
             else:
                self.pieces_have_count += 1
+               self.bytes_left -= len(m)
          o += len(m)
          i += 1
       
-      self.bytes_left -= len(buf)
-      
-      if (self.bytes_left <= 0):
+      if (i >= (self.piece_count - 1)):
          self.log(22, '{0} has finished validation of previously downloaded data.'.format(self))
          if ((self.piecemask.bitlen > 0) and self.piecemask.bit_get(i - 1)):
             # Last piece was valid. Correct self.bytes_left back up
@@ -1734,6 +1733,7 @@ class BTorrentHandler:
       
       req = self.bt_disk_io.async_write(((piece_index*self.piece_length_get() + start,
          stream.read(length)),), self._block_write_process)
+      self.blockmask.block_have_set(piece_index, block_index, True)
       req.bth_piece = piece_index
       req.bth_block = block_index
       req.bth_length = length
@@ -1743,21 +1743,15 @@ class BTorrentHandler:
       piece_index = req.bth_piece
       block_index = req.bth_block
       block_length = req.bth_length
-      if (self.blockmask.block_have_get(piece_index, block_index)):
-         # Writing race condition
-         self.log(30, '{0} not writing p{1} s{2} l{3} because we already have'
-            'it.'.format(self, piece_index, start, block_length))
-         return
-      
-      self.blockmask.block_have_set(piece_index, block_index, True)
+      self.piecemask.bit_set(piece_index, False)
       
       if (self.blockmask.piece_have_completely_get(piece_index)):
          # This is the last block of this piece we were missing. Do hash verification.
          buf = bytearray(self.piece_length_get(piece_index == (self.piece_count - 1)))
-         req_new = self.bt_disk_io.async_read(((piece_index*self.piece_length_get(),
+         req_new = self.bt_disk_io.async_readinto(((piece_index*self.piece_length_get(),
             buf),), self._piece_verify)
          req_new.buf = buf
-         req_neq.bth_index = piece_index
+         req_new.bth_index = piece_index
    
    def _piece_verify(self, req):
       """Verify hash of potentially completed piece"""
@@ -1782,6 +1776,7 @@ class BTorrentHandler:
       
       self.log(14, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
       self.piecemask.bit_set(piece_index, True)
+      piece_length = self.piece_length_get(piece_index == (self.piece_count - 1))
       self.pieces_have_count += 1
       self.bytes_left -= piece_length
       assert (self.bytes_left >= 0)
