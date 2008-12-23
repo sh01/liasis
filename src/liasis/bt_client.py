@@ -1599,6 +1599,7 @@ class BTorrentHandler:
                self.log(25, 'Piece {0} of {1} was supposed to be present, but hd'
                    'content (if present) hashed to {2!a}, while expected hash was'
                    '{3!a}.'.format(i, self, h, self.metainfo.piece_hashes[i]))
+               self.piecemask.bit_set(i, False)
             else:
                self.pieces_have_count += 1
          o += len(m)
