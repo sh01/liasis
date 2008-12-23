@@ -1448,14 +1448,18 @@ class BTorrentHandler:
       # generic traffic statistics; note that these only refer to finished connections
       self.content_bytes_in = content_bytes_in
       self.content_bytes_out = content_bytes_out
-
+      
+      # blockmasks
+      bm_args = (self.piece_count, self.piece_length_get(False), self.piece_length_get(True), self.block_length)
       # For pieces we don't have entirely yet, this saves which of their blocks
       # we have. For pieces we *do* already have completed, the mask field
       # value is undefined
-      self.blockmask = BlockMask(self.piece_count, self.piece_length_get(False), self.piece_length_get(True), self.block_length)
+      self.blockmask = BlockMask(*bm_args)
       # Undefined for blocks we already have. For blocks we don't, saves
       # whether we are expecting to be sent that block by a peer
-      self.blockmask_req = BlockMask(self.piece_count, self.piece_length_get(False), self.piece_length_get(True), self.block_length)
+      self.blockmask_req = BlockMask(*bm_args)
+      # Whether there is an AIO write of this block to disk in progress.
+      self.blockmask_writing = BlockMask(*bm_args)
       
       self.pieces_availability = [0]*self.piece_count
       self.pieces_preference = ()
@@ -1642,6 +1646,7 @@ class BTorrentHandler:
       
       for sub_index in subrange:
          if ((not self.blockmask.block_have_get(index, sub_index)) and 
+             (not self.blockmask_writing.block_have_get(index, sub_index)) and
              ((not self.blockmask_req.block_have_get(index, sub_index))
              or self.endgame_mode)):
             return True
@@ -1731,9 +1736,14 @@ class BTorrentHandler:
          else:
             raise BTClientError("I already have piece {0}, block {1} for connection {2}, and am not in endgame mode.".format(piece_index, block_index, self))
       
+      if (self.blockmask_writing.block_have_get(piece_index, block_index)):
+         self.log(30, '{0} discarding received block p{0} b{1}; dupe while waiting for AIO write to finish.'.format(piece_index, block_index))
+         return False
+      
       req = self.bt_disk_io.async_write(((piece_index*self.piece_length_get() + start,
          stream.read(length)),), self._block_write_process)
-      self.blockmask.block_have_set(piece_index, block_index, True)
+      self.blockmask_writing.block_have_set(piece_index, block_index, True)
+      
       req.bth_piece = piece_index
       req.bth_block = block_index
       req.bth_length = length
@@ -1743,7 +1753,8 @@ class BTorrentHandler:
       piece_index = req.bth_piece
       block_index = req.bth_block
       block_length = req.bth_length
-      self.piecemask.bit_set(piece_index, False)
+      self.blockmask.block_have_set(piece_index, block_index, True)
+      self.blockmask_writing.block_have_set(piece_index, block_index, False)
       
       if (self.blockmask.piece_have_completely_get(piece_index)):
          # This is the last block of this piece we were missing. Do hash verification.
