@@ -1056,7 +1056,9 @@ class BTClientConnection(AsyncDataStream, MSEBase):
             break
          msg_len = struct.unpack('>L', in_data_sio.read(4))[0]
          if (msg_len > self.MSG_SIZE_LIMIT):
-            self.log(30, '{0} got message with excessive length {1}. Closing connection and discarding client. Message was: {2!a}'.format(self, msg_len, in_data_sio.read(4 + msg_len)))
+            mlen_present = min(msg_len, in_data_len-index)
+            in_data_sio.seek(index)
+            self.log(30, '{0} got message with excessive length {1}. Closing connection and discarding client. Message was: {2!a}'.format(self, msg_len, in_data_sio.read(4 + mlen_present)))
             self.client_error_process()
             return
          
