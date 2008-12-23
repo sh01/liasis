@@ -1621,7 +1621,7 @@ class BTorrentHandler:
          self.download_complete = (self.pieces_have_count == self.piece_count)
          return
       
-      buf = bytearray(min(req.blen, self.bytes_left))
+      buf = bytearray(min(req.blen, self.metainfo.length_total - piece_len*i))
       
       req_new = self.bt_disk_io.async_readinto(((piece_len*i,buf),), self.piecemask_validation_perform)
       req_new.buf = buf
