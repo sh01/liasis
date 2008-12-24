@@ -22,6 +22,7 @@ import time
 from hashlib import md5
 from socket import AF_UNIX
 
+from . import diskio
 from .bt_archiving import BTHPickleDirectoryArchiver
 
 def peer_id_generate():
@@ -56,7 +57,7 @@ class BTMConfig(ConfigBase):
 class BTCConfig(ConfigBase):
    """BTC config value storage class"""
    attributes = ('host', 'port', 'pickle_interval', 'backlog', 
-      'bwm_cycle_length', 'bwm_history_length')
+      'bwm_cycle_length', 'bwm_history_length', '_btdiskio_build')
    
    _bytes_attributes = ('bth_archive_basepath', 'host', 'data_basepath')
    
@@ -70,6 +71,9 @@ class BTCConfig(ConfigBase):
    backlog = 10
    bwm_cycle_length = 1
    bwm_history_length = 1000
+   
+   # No user-servicable parts beyond this point.
+   _btdiskio_build = staticmethod(diskio.btdiskio_build)
 
    def config_use(self, target):
       ConfigBase.config_use(self, target)

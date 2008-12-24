@@ -1492,7 +1492,7 @@ class BTorrentHandler:
       return BTorrentHandlerMirror.state_get_from_original(self)
       rv = {}
       
-   def io_start(self, sa, basepath, port):
+   def io_start(self, sa, basepath, port, btdiskio_build):
       """Start IO init sequence: open files on disk, and start piecemask
          validation (if any)"""
       assert not (self.init_started)
@@ -2158,7 +2158,8 @@ class BTClient:
       
       for bth in self.torrents.values():
          if not (bth.init_started):
-            bth.io_start(sa, self.data_basepath, self.port)
+            bth.io_start(sa, self.data_basepath, self.port,
+               self._btdiskio_build)
    
    def bths_reannounce_tracker(self):
       """Tell each active BTH managed by this instance to send an announce to their tracker"""
@@ -2213,7 +2214,8 @@ class BTClient:
       self.torrent_infohashes_update()
       self.em_bth_add(self, metainfo.info_hash)
       if not (self.event_dispatcher is None):
-         bth.io_start(self.sa, self.data_basepath, self.port)
+         bth.io_start(self.sa, self.data_basepath, self.port,
+            self._btdiskio_build)
       
       return bth
 

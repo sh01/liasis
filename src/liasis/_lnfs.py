@@ -25,7 +25,7 @@ Also, the resulting data won't be readable by anything except programs
 specifically supporting LNFS, which at the time of writing include liasis -
 and nothing else.
 
-As such, it's usefulness is limited to some very specific scenarios; if you
+As such, its usefulness is limited to some very specific scenarios; if you
 don't already have something in mind you could use this for, it probably
 isn't going to be useful to you at all.
 
@@ -76,7 +76,6 @@ class LNFSVolume:
          len_left -= blocklen
       
       self.free_offset = offset
-      print(self.torrents, self.free_offset)
    
    def btdiskio_build(self, sa, metainfo, *args, **kwargs):
       if (metainfo.info_hash in self.torrents):
@@ -89,7 +88,7 @@ class LNFSVolume:
          aio = sa.aio
          bhd = struct.pack(self.BLOCK_HEADER_FMT, 1, tlen, metainfo.info_hash)
          if not (aio is None):
-            aio.REQ_CLS(aio.MODE_WRITE, bhd, self.f, self.free_offset, callback=req._process_result)
+            aio.io((aio.REQ_CLS(aio.MODE_WRITE, bhd, self.f, self.free_offset, callback=lambda *args: None),))
          else:
             self.f.seek(self.free_offset)
             self.f.write(bhd)
@@ -157,4 +156,3 @@ if (__name__ == '__main__'):
    btfn_s = sys.argv[2:]
    
    _selftest(vfn, btfn_s)
-
