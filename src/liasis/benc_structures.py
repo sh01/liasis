@@ -196,7 +196,7 @@ class BTMetaInfo:
    hash_helper = sha1
    
    btmeta_known_fields_global = set(('announce-list', 'announce', 'creation date', 'created by', 'comment', 'info'))
-   btmeta_known_fields_info = set(('piece length', 'pieces', 'length', 'name', 'path', 'md5sum', 'length', 'files'))
+   btmeta_known_fields_info = set(('piece length', 'pieces', 'length', 'name', 'path', 'md5sum', 'files'))
 
    hr_line_fmt_str = '{0:20} {1}'
    hr_line_fmt_repr = '{0:20} {1!a}'
@@ -255,6 +255,10 @@ class BTMetaInfo:
          basename = info[b'name']
       
       length_total = sum([btfile.length for btfile in files])
+      if not (piece_length*(len(piece_hashes)-1) < length_total <= piece_length*len(piece_hashes)):
+         raise ValueError('BTMetaInfo sanity check failed: {0} pieces,'
+            'piece_length {1}, sum of file lengths {2}.'.format(
+            len(piece_hashes), piece_length, length_total))
       
       info_hash = cls.str_hash(benc_str_from_py(info))
       
