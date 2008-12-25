@@ -43,7 +43,8 @@ class BTDiskIORequest:
 
 class BTDiskBase:
    """Baseclass for file like objects for accessing the set of files targeted by one torrent"""
-   def __init__(self, sa, metainfo, basedir, basename_use=True):
+   def __init__(self, sa, metainfo, basedir, basename_use=True,
+         mkdirs=True, mkfiles=True):
       """Initialize instance with metainfo data.
       
       All files in metainfo.files should be closed, and will be opened as part
@@ -72,7 +73,7 @@ class BTDiskBase:
          for btfile in self.files:
             if (btfile.get_openness()):
                raise BTCStateError('BTFile {0} is already open.'.format(btfile))
-            btfile.file_open(basedir)
+            btfile.file_open(basedir, mkdirs=mkdirs, mkfiles=mkfiles)
             files_processed.append(btfile)
       except Exception:
          # If something went wrong, don't leave processed files newly opened

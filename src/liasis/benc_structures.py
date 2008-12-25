@@ -353,7 +353,8 @@ class BTTargetFile:
    def get_openness(self):
       return not (self.file is None)
    
-   def file_open(self, basedir, bufsize=4096, mkdirs=True, lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
+   def file_open(self, basedir, bufsize=4096, mkdirs=True, mkfiles=True,
+         lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
       assert (self.file is None)
       path = os.path.normpath(os.path.join(basedir, self.path))
       ap = os.path.abspath(path)
@@ -363,7 +364,7 @@ class BTTargetFile:
       pathdir = os.path.dirname(ap)
       if (not os.path.exists(pathdir)):
          os.makedirs(pathdir)
-      if (os.path.exists(path)):
+      if ((not mkfiles) or (os.path.exists(path))):
          # Note that there is a fundamental race condition here: if this file
          # is created by an external event before we do it, we'll truncate it.
          # OTOH, if there is any other process modifying the file in parallel
