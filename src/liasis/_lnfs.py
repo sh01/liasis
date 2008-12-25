@@ -125,7 +125,7 @@ class LNFSDiskIOBase:
          raise ValueError('length {0} is bogus'.format(length))
       if ((offset + length) > self._length):
          raise ValueError('_fileset_get({0}, {1}) called on {0} with length {1}'.format(offset, length, self, self._length))
-      return (self._volume.f, self._offset+offset, length)
+      return ((self._volume.f, self._offset+offset, length),)
 
    def close(self):
       pass
