@@ -80,20 +80,28 @@ class LNFSVolume:
    def btdiskio_build(self, sa, metainfo, *args, **kwargs):
       if (metainfo.info_hash in self.torrents):
          (offset, blocklen) = self.torrents[metainfo.info_hash]
-         di_args = (sa, self, offset, blocklen)
+         di_args = (sa, self, offset+self.BLOCK_HEADER_LEN, blocklen)
       else:
          tlen = metainfo.length_total
          if (tlen > (self.f_len - self.free_offset)):
             raise LNFSError('{0} has insufficient memory to store {1} more bytes'.format(self, tlen))
          aio = sa.aio
          bhd = struct.pack(self.BLOCK_HEADER_FMT, 1, tlen, metainfo.info_hash)
+         bhd_next = struct.pack(self.BLOCK_HEADER_FMT, 0, 0, b'\x00'*20)
          if not (aio is None):
-            aio.io((aio.REQ_CLS(aio.MODE_WRITE, bhd, self.f, self.free_offset, callback=lambda *args: None),))
+            aio.io(
+               (
+                  aio.REQ_CLS(aio.MODE_WRITE, bhd_next, self.f, self.free_offset + tlen + self.BLOCK_HEADER_LEN, callback=lambda *args: None),
+                  aio.REQ_CLS(aio.MODE_WRITE, bhd, self.f, self.free_offset, callback=lambda *args: None)
+               )
+            )
          else:
+            self.f.seek(self.free_offset + tlen + self.BLOCK_HEADER_LEN)
+            self.f.write(bhd_next)
             self.f.seek(self.free_offset)
             self.f.write(bhd)
          
-         di_args = (sa, self, self.free_offset, tlen)
+         di_args = (sa, self, self.free_offset+self.BLOCK_HEADER_LEN, tlen)
          self.torrents[metainfo.info_hash] = (self.free_offset, tlen)
          self.free_offset += tlen + self.BLOCK_HEADER_LEN
       
