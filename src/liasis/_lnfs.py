@@ -114,14 +114,18 @@ class LNFSVolume:
 class LNFSDiskIOBase:
    def __init__(self, sa, volume, offset, length):
       self._sa = sa
-      self.volume = volume
-      self.offset = offset
-      self.length = length
+      self._volume = volume
+      self._offset = offset
+      self._length = length
 
    def _fileset_get(self, offset:int, length:int):
-      if ((offset + length) > self.length):
-         raise ValueError('_fileset_get({0}, {1}) called on {0} with length {1}'.format(offset, length, self, self.length))
-      return (self.volume.f, self.offset+offset, length)
+      if (offset < 0):
+         raise ValueError('offset {0} is bogus.'.format(offset))
+      if (length < 0):
+         raise ValueError('length {0} is bogus'.format(length))
+      if ((offset + length) > self._length):
+         raise ValueError('_fileset_get({0}, {1}) called on {0} with length {1}'.format(offset, length, self, self._length))
+      return (self._volume.f, self._offset+offset, length)
 
    def close(self):
       pass
