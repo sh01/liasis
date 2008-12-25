@@ -45,9 +45,9 @@ class LNFSVolume:
    DEV_HEADER = b'LNFS\x0a\x00\x0d\x00\x00\x00\x01'
    BLOCK_HEADER_FMT = b'>BQ20s'
    BLOCK_HEADER_LEN = struct.calcsize(BLOCK_HEADER_FMT)
-   def __init__(self, fl):
+   def __init__(self, fl, lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
       self.f = fl
-      fcntl.lockf(fl, fcntl.LOCK_EX | fcntl.LOCK_NB)
+      fcntl.lockf(fl, lock_op)
       fl.seek(0,2)
       self.f_len = fl.tell()
       fl.seek(0)
@@ -77,10 +77,15 @@ class LNFSVolume:
       
       self.free_offset = offset
    
-   def btdiskio_build(self, sa, metainfo, *args, **kwargs):
+   def btdiskio_build(self, sa, metainfo, basepath, mkdirs=True, mkfiles=True):
       if (metainfo.info_hash in self.torrents):
          (offset, blocklen) = self.torrents[metainfo.info_hash]
          di_args = (sa, self, offset+self.BLOCK_HEADER_LEN, blocklen)
+      # Kinda ugly, but the correspondence is close enough not to justify
+      # overhauling this part of the btdiskio_build interface.
+      elif (not mkfiles):
+         raise LNFSError('Don\'t have data about torrent with info_hash'
+            '{0} and am not supposed to auto-add.'.format(metainfo.info_hash))
       else:
          tlen = metainfo.length_total
          if (tlen > (self.f_len - self.free_offset)):

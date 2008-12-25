@@ -1,0 +1,76 @@
+#!/usr/bin/env python
+#Copyright 2008 Sebastian Hagen
+# This file is part of liasis.
+#
+# liasis is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# liasis is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+from hashlib import sha1
+
+from gonium.service_aggregation import ServiceAggregate
+
+from liasis.benc_structures import BTMetaInfo
+from liasis.bt_piecemasks import BitMask
+from liasis._lnfs import LNFSVolume
+from liasis.diskio import btdiskio_build
+
+
+def piece_data_verify(sa, mi, btdiskio):
+   pl = mi.piece_length
+   rv = BitMask(bitlen=len(mi.piece_hashes))
+   
+   for i in range(len(mi.piece_hashes)):
+      offset = i*pl
+      l = min(pl, mi.length_total - offset)
+      buf = bytearray(l)
+      btdiskio.async_readinto(((offset,buf),), callback=lambda *args: sa.ed.shutdown())
+      sa.ed.event_loop()
+      h_hd = sha1(buf).digest()
+      h_mi = mi.piece_hashes[i]
+      if (h_hd == h_mi):
+         rv.bit_set(i, True)
+   return rv
+
+
+def _main():
+   import fcntl
+   import optparse
+   from gonium import _debugging; _debugging.streamlogger_setup()
+   
+   op = optparse.OptionParser(usage='%prog [options] <btmetafile>')
+   op.add_option('-l', '--lnfs-volume', dest='lnfs_vol', metavar='VOLUME', default=None, help='LNFS volume to read data from; if not specified, use standard FS access instead.')
+   op.add_option('-b', '--basepath', dest='basepath', default='.', metavar='PATH', help='Basepath to use for reading BT data')
+   (options, args) = op.parse_args()
+   
+   basepath = options.basepath.encode()
+   btmeta_fn = args[0]
+   
+   btdiskio_buildl = btdiskio_build
+   if not (options.lnfs_vol is None):
+      vol = LNFSVolume(open(options.lnfs_vol,'rb'),lock_op=fcntl.LOCK_SH|fcntl.LOCK_NB)
+      btdiskio_buildl = vol.btdiskio_build
+   
+   mi = BTMetaInfo.build_from_benc_stream(open(btmeta_fn, 'rb'))
+   
+   sa = ServiceAggregate()
+   sa.aio = None
+   btdiskio = btdiskio_buildl(sa, mi, basepath, mkdirs=False, mkfiles=False)
+   pm = piece_data_verify(sa, mi, btdiskio)
+   print(pm)
+   pc = len(mi.piece_hashes)
+   pvc = pm.bits_set_count()
+   print('{0} / {1} pieces valid ({2:f}%).'.format(pc,pvc,100*pvc/pc))
+
+
+if (__name__ == '__main__'):
+   _main()
