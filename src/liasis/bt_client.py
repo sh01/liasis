@@ -754,10 +754,11 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          for sub_index in subrange:
             if (len(self.blocks_pending) >= self.pieces_queuelen):
                break
-            if ((not self.bth.blockmask.block_have_get(index, sub_index)) and 
-                ((not self.bth.blockmask_req.block_have_get(index, sub_index)) or
+            if (((not self.bth.blockmask.block_have_get(index, sub_index)) and
+                (not self.bth.blockmask_req.block_have_get(index, sub_index)) and
+                (not self.bth.blockmask_writing.block_have_get(index, sub_index))) or
                 (self.bth.endgame_mode and (not 
-                ((index, sub_index) in self.blocks_pending))))):
+                ((index, sub_index) in self.blocks_pending)))):
                self.block_request(index, sub_index)
                if (self.bth is None):
                   # Send attempt triggered connection close
