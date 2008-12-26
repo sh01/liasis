@@ -33,7 +33,8 @@ setup(name='liasis',
       'src/tools/liasis_client_qt',
       'src/tools/liasis_daemon',
       'src/tools/liasis_metainfo_print',
-      'src/tools/liasis_tool_scrape'
+      'src/tools/liasis_tool_scrape',
+      'src/tools/liasis_btdata_verify'
    ),
    package_dir={'liasis':'src/liasis'}
 )
