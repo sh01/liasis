@@ -77,7 +77,8 @@ class LNFSVolume:
       
       self.free_offset = offset
    
-   def btdiskio_build(self, sa, metainfo, basepath, mkdirs=True, mkfiles=True):
+   def btdiskio_build(self, sa, metainfo, basepath, mkdirs=True, mkfiles=True,
+         *args, **kwargs):
       if (metainfo.info_hash in self.torrents):
          (offset, blocklen) = self.torrents[metainfo.info_hash]
          di_args = (sa, self, offset+self.BLOCK_HEADER_LEN, blocklen)
