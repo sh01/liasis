@@ -1908,7 +1908,8 @@ class BTorrentHandler:
    def maintenance_perform(self):
       """Perform various maintenance tasks"""
       if (self.piecemask.bitlen - self.pieces_have_count < 10):
-         self.endgame_mode = True
+         #self.endgame_mode = True
+         pass
       
       for conn in self.peer_connections.copy():
          conn.maintenance_perform()
