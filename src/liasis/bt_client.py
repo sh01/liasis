@@ -457,11 +457,11 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       """Close connection and disassociate ourselves from BT object tree"""
       self.log2(18, '{0} shutting down'.format(self))
       if not (self.bth is None):
-         self.bth.connection_remove(self)
          self.bth.pieces_availability_adjust_mask(self.piecemask, -1)
          # forget about pending blocks
          for (piece_index, block_index) in self.blocks_pending:
             self.bth.blockmask_req.block_have_set(piece_index, block_index, False)
+         self.bth.connection_remove(self)
          self.blocks_pending = set()
          self.pieces_wanted = deque()
          
@@ -1603,7 +1603,7 @@ class BTorrentHandler:
                # log messages aren't worth the additional complexity.
                self.log(25, 'Piece {0} of {1} was supposed to be present, but hd'
                    'content (if present) hashed to {2!a}, while expected hash was'
-                   '{3!a}.'.format(i, self, h, self.metainfo.piece_hashes[i]))
+                   ' {3!a}.'.format(i, self, h, self.metainfo.piece_hashes[i]))
                self.piecemask.bit_set(i, False)
             else:
                self.pieces_have_count += 1
@@ -1912,6 +1912,14 @@ class BTorrentHandler:
          pass
       
       for conn in self.peer_connections.copy():
+         # Note that doing maintenance on one connection might cause a sock
+         # write access, which might result in the connection being closed,
+         # which might result in a downloaders_update(), which might ultimately
+         # result in *other* connections being closed, too. Therefore we can't
+         # assume that any connection which was valid at the start of iteration
+         # will still be so when we process it.
+         if (not conn):
+            continue
          conn.maintenance_perform()
       
       self.downloaders_update()
