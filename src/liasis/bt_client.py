@@ -1611,7 +1611,7 @@ class BTorrentHandler:
          o += len(m)
          i += 1
       
-      if (i >= (self.piece_count - 1)):
+      if (i >= self.piece_count):
          self.log(22, '{0} has finished validation of previously downloaded data.'.format(self))
          if ((self.piecemask.bitlen > 0) and self.piecemask.bit_get(i - 1)):
             # Last piece was valid. Correct self.bytes_left back up
