@@ -2234,9 +2234,10 @@ class BTClient:
       if not (info_hash in self.torrents):
          raise ValueError('Not tracking torrent with info_hash {0!a}.'.format(info_hash))
       bth = self.torrents[info_hash]
-      bth.close()
-      self.bth_archiver.bth_archive(bth)
+      bth.data_transfers_stop()
+      self.bth_archiver.bth_archive(bth) # can fail if we're out of disk space
       self.bt_stats_tracker.bth_process(bth)
+      bth.close()
       del(self.torrents[info_hash])
       self.torrent_infohashes_update()
       return bth
