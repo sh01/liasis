@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007,2008 Sebastian Hagen
+#Copyright 2007,2008,2009 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -91,6 +91,16 @@ class BTControlConnection(BTControlConnectionBase, AsyncDataStream):
             rv.append(el)
       return rv
 
+#------------------------------------------------------------------------------ output helpers
+   def command_fail(self, cmd, args, exc):
+      """Send COMMANDFAIL message to client"""
+      eargs = [str(exc)]
+      if (isinstance(exc, EnvironmentError)):
+         eargs.append(2)
+         eargs.append(exc.errno)
+      
+      self.msg_send(b'COMMANDFAIL', [[[cmd] + args], eargs])
+
 #------------------------------------------------------------------------------ network input handlers
    def input_process_BUILDBTHFROMMETAINFO(self, cmd, args):
       """Process BUILDBTHFROMMETAINFO message"""
@@ -106,19 +116,30 @@ class BTControlConnection(BTControlConnectionBase, AsyncDataStream):
       
       if (mi.info_hash in btc.torrents):
          self.msg_send(b'COMMANDNOOP', [cmd] + args)
-      else:
+         return
+      try:
+         # Requires disk I/O, may fail through no fault of ours
          btc.torrent_add(mi, peer_id=self.btm.peer_id_generator(),
                piecemask_validate=True,
                piecemask=BitMask.build_full(len(mi.piece_hashes)),
                active=active)
-         self.msg_send(b'COMMANDOK', [cmd] + args)
+      except BaseException as exc:
+         self.command_fail(cmd, args, exc)
+         return
+      
+      self.msg_send(b'COMMANDOK', [cmd] + args)
    
    def input_process_DROPBTH(self, cmd, args):
       """Process DROPBTH message"""
       client_idx = self.client_nnint_get(args, 0)
       btc = self.btm.bt_clients[client_idx]
       mi_string = args[1]
-      btc.torrent_drop(mi_string)
+      try:
+         btc.torrent_drop(mi_string)
+      except BaseException as exc:
+         self.command_fail(cmd, args, exc)
+         return
+      
       self.msg_send(b'COMMANDOK', [cmd] + args)
       
    def input_process_GETCLIENTCOUNT(self, cmd, args):

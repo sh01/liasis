@@ -71,7 +71,7 @@ Arguments:
    2.: string, bencoded metainfo data
    3.: int, (boolean) initial activity of newly instanciated BTH
 RC Risk: client count
-Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Reply: RCREJ || COMMANDOK || COMMANDNOOP || COMMANDFAIL
 Meaning:
 Requests that the liasis server build a new BTH from the specified BTH and
 activity status and add it to the specified BTC.
@@ -82,7 +82,7 @@ Arguments:
    1.: int, client index
    2.: string, torrent info-hash
 RC Risk: client count, bth set, bth activeness
-Reply: RCREJ || COMMANDOK
+Reply: RCREJ || COMMANDOK || COMMANDFAIL
 Requests that the liasis server drops the BTH with the specifid info-hash from
 the list of managed BTHs managed by the specified BTC. This will provoke an
 ARGERROR if the specified BTC does not manage a BTH with the specified
@@ -94,7 +94,7 @@ Msgtype: FORCEBTCREANNOUNCE
 Arguments:
    1.: int, client index
 RC risk: client count
-Reply: RCREJ || COMMANDOK
+Reply: RCREJ || COMMANDOK || COMMANDFAIL
 Meaning:
 Requests that the server force all active BTHs associated with the specified
 BTC to reannounce to their respective tracker.
@@ -111,7 +111,7 @@ Arguments:
    1.: int, client index
    2.: string, torrent info-hash
 RC risk: client count
-Reply: RCREJ || BTHDATA
+Reply: RCREJ || BTHDATA || COMMANDFAIL
 Meaning:
 Requests a BTHDATA report from the server.
 
@@ -122,7 +122,7 @@ Arguments:
    2.: string, torrent info-hash
    3.: int, maximum history length
 RC risk: client count
-Reply: RCREJ || BTHTHROUGHPUT
+Reply: RCREJ || BTHTHROUGHPUT || COMMANDFAIL
 Meaning:
 Request a dump of the throughput history of the specified BTH instance.
 
@@ -139,7 +139,7 @@ Msgtype: GETCLIENTDATA
 Arguments:
    1.: int, client index
 RC risk: client count
-Reply: RCREJ || CLIENTDATA
+Reply: RCREJ || CLIENTDATA || COMMANDFAIL
 Meaning:
 Requests a dump of all interesting data about the BT Client instance specified
 by index.
@@ -149,7 +149,7 @@ Msgtype: GETCLIENTTORRENTS
 Arguments:
    1.: int, client index
 RC risk: client count
-Reply: RCREJ || CLIENTTORRENTS
+Reply: RCREJ || CLIENTTORRENTS || COMMANDFAIL
 Meaning:
 Request a dump of the info-hashes of any torrents the specified client is
 managing.
@@ -160,7 +160,7 @@ Arguments:
    1.: int, client index
    2.: string, torrent info-hash
 RC risk: client count
-Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Reply: RCREJ || COMMANDOK || COMMANDNOOP || COMMANDFAIL
 Meaning: Requests that the server start the specified bth instance.
 
 
@@ -169,7 +169,7 @@ Arguments:
    1.: int, client index
    2.: string, torrent info-hash
 RC risk: client count
-Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Reply: RCREJ || COMMANDOK || COMMANDNOOP || COMMANDFAIL
 Meaning: Requests that the server stop the specified bth instance.
 
 
@@ -177,7 +177,7 @@ Msgtype: SUBSCRIBEBTHTHROUGHPUT
 Arguments:
    1.: int, client index
 RC risk: client count
-Reply: RCREJ || COMMANDOK || COMMANDNOOP
+Reply: RCREJ || COMMANDOK || COMMANDNOOP || COMMANDFAIL
 Meaning:
 Request updates of the throughput history of all BTHs of the the specified
 BTC to be sent whenever this data changes.
@@ -187,7 +187,7 @@ Msgtype: UNSUBSCRIBEBTHTHROUGHPUT
 Arguments:
    1.: int, client index
 RC risk: client count
-Reply: RCREH || COMMANDOK || COMMANDNOOP
+Reply: RCREH || COMMANDOK || COMMANDNOOP || COMMANDFAIL
 Meaning:
 Request an existing BTH throughput subscription to be cancelled.
 
@@ -199,7 +199,7 @@ Arguments:
    2.: string, human-readable error description
 Meaning:
 Asserts that the specified request has not been processed because the arguments
-where not in the format expected by the server
+where not in the format expected by the server.
 
 
 Msgtype: BTHDATA
@@ -278,6 +278,16 @@ Asserts that the specified command line has not resulted in any change in the
 liasis server's state, because any execution of it would have been a NO-OP.
 A client receiving a message of this type MAY treat it like a COMMANDOK message
 with identical arguments.
+
+
+Msgtype: COMMANDFAIL
+Arguments:
+   1.: list, NAKed command and arguments
+   2.: human-readable error message
+   3.: optional: additional error information
+RC risk: none
+Meaning:
+Asserts that the specified command line could not be executed.
 
 
 Msgtype: INVALIDCLIENTCOUNT

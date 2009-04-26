@@ -2220,12 +2220,13 @@ class BTClient:
       if (metainfo.info_hash) in self.torrents:
          raise DupeError("I'm already tracking torrent {0} with same info_hash {1!a} as in specified metainfo.".format(self, metainfo.info_hash))
       bth = BTorrentHandler(metainfo=metainfo, port=self.port, active=active, *bth_args, **bth_kwargs)
-      self.torrents[metainfo.info_hash] = bth
-      self.torrent_infohashes_update()
-      self.em_bth_add(self, metainfo.info_hash)
       if not (self.event_dispatcher is None):
          bth.io_start(self.sa, self.data_basepath, self.port,
             self._btdiskio_build)
+      
+      self.torrents[metainfo.info_hash] = bth
+      self.torrent_infohashes_update()
+      self.em_bth_add(self, metainfo.info_hash)
       
       return bth
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007,2008 Sebastian Hagen
+#Copyright 2007,2008,2009 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -20,6 +20,7 @@ import struct
 from io import BytesIO
 
 from .benc_structures import py_from_benc_str, benc_str_from_py
+from gonium.fdm.exceptions import CloseFD
 
 
 class BTControlConnectionError(Exception):
@@ -129,11 +130,11 @@ class BTControlConnectionBase:
          except (IndexError, TypeError, ValueError, KeyError) as exc:
             self.error_process_arg(data, msg_data, exc)
             self.log(30, 'Protocol args error on {0}, line {1!a}:'.format(self, data), exc_info=True)
-         except:
+         except BaseException as exc:
             # Fatal; caller will try to close connection. Don't try to process
-            # anymore of the buffered input.
+            # any more of the buffered input.
             self.discard_inbuf_data()
-            raise
+            raise CloseFD() from exc
       
       self.discard_inbuf_data(in_data_sio.tell())
 

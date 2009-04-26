@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007,2008 Sebastian Hagen
+#Copyright 2007,2008,2009 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -197,6 +197,10 @@ class BTControlConnectionClient(BTControlConnectionBase):
    def input_process_COMMANDNOOP(self, cmd, args):
       """Process COMMANDNOOP message"""
       pass
+   
+   def input_process_COMMANDFAIL(self, cmd, args):
+      """Process COMMANDFAIL message"""
+      pass
 
    def input_process_INVALIDCLIENTCOUNT(self, cmd, args):
       """Process INVALIDCLIENTCOUNT message"""
@@ -252,6 +256,7 @@ class BTControlConnectionClient(BTControlConnectionBase):
        b'INVALIDCLIENTCOUNT': ('input_process_INVALIDCLIENTCOUNT', True, None),
        b'INVALIDCLIENTTORRENTS': ('input_process_INVALIDCLIENTTORRENTS', True, None),
        b'RCREJ':('input_process_RCREJ', True, all_set),
+       b'COMMANDFAIL':('input_process_COMMANDFAIL', True, all_set),
        b'UNKNOWNCMD': ('input_process_PROTOERROR', True, all_set)
    }
    

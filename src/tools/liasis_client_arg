@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007,2008 Sebastian Hagen
+#Copyright 2007,2008,2009 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -53,14 +53,20 @@ class btccs(BTControlConnectionClientGonium):
       """Process COMMANDNOOP message"""
       BTControlConnectionClientGonium.input_process_COMMANDNOOP(self, cmd, args)
       if ((self.td_print_timer is None) and (self.messages_pending == [])):
-         print('Sucessfully executed NOOP {0}.'.format(args))
+         print('Command was a NOOP.')
          self.ed.shutdown()
 
    def input_process_COMMANDOK(self, cmd, args):
       """Process COMMANDOK message"""
       BTControlConnectionClientGonium.input_process_COMMANDOK(self, cmd, args)
       if ((self.td_print_timer is None) and (self.messages_pending == [])):
-         print('Sucessfully executed {0}.'.format(args))
+         print('Sucessfully executed command.')
+         self.ed.shutdown()
+
+   def input_process_COMMANDFAIL(self, cmd, args):
+      """Process COMMANDFAIL"""
+      if ((self.td_print_timer is None) and (self.messages_pending == [])):
+         print('Command failed: {0!a}.'.format(args[1]))
          self.ed.shutdown()
 
    def input_process_PROTOERROR(self, cmd, args):
