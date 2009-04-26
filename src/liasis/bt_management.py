@@ -94,7 +94,7 @@ class BTControlConnection(BTControlConnectionBase, AsyncDataStream):
 #------------------------------------------------------------------------------ output helpers
    def command_fail(self, cmd, args, exc):
       """Send COMMANDFAIL message to client"""
-      eargs = [str(exc)]
+      eargs = [str(exc).encode()]
       if (isinstance(exc, EnvironmentError)):
          eargs.append(2)
          eargs.append(exc.errno)
