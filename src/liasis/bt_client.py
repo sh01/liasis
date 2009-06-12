@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import random
+import socket
 import struct
 import time
 from collections import deque
@@ -1484,7 +1485,7 @@ class BTorrentHandler:
       if (not self.active):
          raise BTCStateError('{0} is already inactive.'.format(self))
       self.active = False
-      self.client_announce_tracker(event='stopped', event_force=True)
+      self.client_announce_tracker(event=b'stopped', event_force=True)
       for conn in self.peer_connections.copy():
          conn.close()
       
@@ -1950,7 +1951,11 @@ class BTorrentHandler:
             break
          peer = peers_targeted[i]
          self.log(15, 'BTH {0} is opening connection to peer {1!a}.'.format(self, peer))
-         conn = BTClientConnection.peer_connect(self.event_dispatcher,peer.address_get())
+         try:
+            conn = BTClientConnection.peer_connect(self.event_dispatcher,peer.address_get())
+         except socket.error as exc:
+            self.log(30, 'BTH {0} failed to connect to {1!a} with error "{2}"'.format(self, peer, exc))
+            continue
          conn.info_hash = self.metainfo.info_hash
          conn.bandwidth_logger_in = self.bandwidth_logger_in
          self.connection_add(conn)

@@ -47,6 +47,9 @@ class TrackerRequest:
    log = logger.log
    fields = ('info_hash', 'peer_id', 'port', 'uploaded', 'downloaded', 'left', 'compact', 'event', 'ip', 'numwant', 'trackerid', 'key')
    def __init__(self, announce_url, info_hash, peer_id, port, uploaded, downloaded, left, compact=True, event=None, ip=None, numwant=None, trackerid=None, key=None):
+      if (isinstance(event,str)):
+         # UDPTrackerRequest requires this to be bytes
+         event = event.encode('ascii')
       for field in self.fields:
          setattr(self, field, locals()[field])
       self.announce_url = announce_url
