@@ -20,6 +20,8 @@
 # <http://www.bittorrent.org/protocol.html> and
 # <http://wiki.theory.org/BitTorrentSpecification>
 
+# FIXME: add options to limit allowed address families for this?
+
 import logging
 import http.client
 import random
@@ -344,7 +346,15 @@ class UDPTrackerRequest(TrackerRequest):
       self.result_callback = result_callback
       self.error_callback = error_callback
       
-      rsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      try:
+         tracker_addrinfo = random.choice(socket.getaddrinfo(*self.address_get()))
+      except socket.error as exc:
+         self.log(35, "Connection to tracker {0} failed; found no valid records. Faking timeout.".format(self.address_get()))
+         self.timeout_timer = event_dispatcher.set_timer(0, self.timeout_handle)
+         return
+      
+      tracker_AF = tracker_addrinfo[0]
+      rsock = socket.socket(tracker_AF, socket.SOCK_DGRAM)
       
       self.sock = AsyncPacketSock(event_dispatcher, rsock)
       self.sock.process_input = self.frame_process
@@ -352,7 +362,7 @@ class UDPTrackerRequest(TrackerRequest):
        
       self.transaction_id = self.tid_generate()
       self.state = 0
-      self.tracker_address = (random.choice(socket.getaddrinfo(*self.address_get()))[4])
+      self.tracker_address = tracker_addrinfo[4][:2]
       
       self.frame_send(self.frame_build_init())
       
