@@ -261,10 +261,15 @@ class UDPTrackerRequest(TrackerRequest):
       
       (interval, seeders, leechers) = struct.unpack('>lll', data[:12])
       peers = BTPeer.seq_build(data[12:])
-       
+      
+      peers_filtered = []
       for peer in peers:
          if ((int(peer.ip) == 0) or (peer.port == 0)):
-            raise ValueError('Invalid BTPeer data {0!a}.'.format(peer,))
+            self.log(30, '{0} for invalid BTPeer data {1!a}. Discarding.'.format(self, peer))
+            continue
+         peers_filtered.append(peer)
+      
+      peers = peers_filtered
       
       # Build response data manually, since it doesn't exist at protocol level
       response_data = {
@@ -330,9 +335,12 @@ class UDPTrackerRequest(TrackerRequest):
          return
 
       if (action in self.FRAME_HANDLERS):
-         self.FRAME_HANDLERS[action](self, data[8:])
+         try:
+            self.FRAME_HANDLERS[action](self, data[8:])
+         except (TrackerResponseError, ValueError) as exc:
+            self.log(30, '{0!a} failed to parse udp frame. Discarding frame. Traceback:'.format(self), exc_info=True)
       else:
-         self.log(30, '{0!a} for frame with unknown action {1!a}. Discarding frame.'.format(self, action))
+         self.log(30, '{0!a} got frame with unknown action {1!a}. Discarding frame.'.format(self, action))
     
    def frame_send(self, data):
       """Send frame to tracker"""
