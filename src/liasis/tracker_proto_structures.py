@@ -372,8 +372,14 @@ class UDPTrackerRequest(TrackerRequest):
       self.state = 0
       self.tracker_address = tracker_addrinfo[4][:2]
       
-      self.frame_send(self.frame_build_init())
-      
+      try:
+         self.frame_send(self.frame_build_init())
+      except socket.error as exc:
+         # Ugly hack, but modeling explicitly reported send failure different
+         # from a timeout isn't worth the hassle.
+         self.log(30, 'Unable to contact tracker {0}: UDP sendto() failed with \'{1}\'.'.format(self.address_get(),exc))
+         self.timeout_timer = event_dispatcher.set_timer(0, self.timeout_handle)
+         return
       self.timeout_timer = event_dispatcher.set_timer(self.TIMEOUT, self.timeout_handle)
     
    def close(self):
