@@ -251,8 +251,7 @@ class UDPTrackerRequest(TrackerRequest):
          raise ValueError('Data {0!a} invalid; expected exactly 8 bytes.'.format(data,))
       return struct.unpack('>q', data)[0]
    
-   @staticmethod
-   def frame_parsebody_announce(data):
+   def frame_parsebody_announce(self, data):
       """Parse announce response body (packet minus initial 8 bytes) and return contents"""
       if (len(data) < 12):
          raise ValueError('Data {0!a} invalid; expected at least 12 bytes.'.format(data,))
@@ -294,8 +293,13 @@ class UDPTrackerRequest(TrackerRequest):
       self.connection_id = self.frame_parsebody_init(data)
       self.transaction_id = self.tid_generate()
       self.state = 1
-      self.frame_send(self.frame_build_announce())
-       
+      try:
+         self.frame_send(self.frame_build_announce())
+      except socket.error as exc:
+         self.log(30, 'Unable to contact tracker {0}: UDP sendto() failed with \'{1}\'. Faking timeout.'.format(self.address_get(),exc))
+         self._timeout_fake()
+         return
+      
    def frame_process_announce(self, data):
       """Process announce response"""
       if (self.state != 1):
@@ -345,7 +349,12 @@ class UDPTrackerRequest(TrackerRequest):
    def frame_send(self, data):
       """Send frame to tracker"""
       self.sock.send_bytes((data,), self.tracker_address)
-    
+   
+   def _timeout_fake(self):
+      if not (self.timeout_timer is None):
+         self.timeout_timer.cancel()
+      self.timeout_timer = self.ed.set_timer(0, self.timeout_handle)
+   
    def request_send(self, event_dispatcher, result_callback, error_callback):
       """Initiate announce sequence"""
       if not (self.state is None):
@@ -354,11 +363,13 @@ class UDPTrackerRequest(TrackerRequest):
       self.result_callback = result_callback
       self.error_callback = error_callback
       
+      self.ed = event_dispatcher
+      
       try:
          tracker_addrinfo = random.choice(socket.getaddrinfo(*self.address_get()))
       except socket.error as exc:
          self.log(35, "Connection to tracker {0} failed; found no valid records. Faking timeout.".format(self.address_get()))
-         self.timeout_timer = event_dispatcher.set_timer(0, self.timeout_handle)
+         self._timeout_fake()
          return
       
       tracker_AF = tracker_addrinfo[0]
@@ -377,13 +388,14 @@ class UDPTrackerRequest(TrackerRequest):
       except socket.error as exc:
          # Ugly hack, but modeling explicitly reported send failure different
          # from a timeout isn't worth the hassle.
-         self.log(30, 'Unable to contact tracker {0}: UDP sendto() failed with \'{1}\'.'.format(self.address_get(),exc))
-         self.timeout_timer = event_dispatcher.set_timer(0, self.timeout_handle)
+         self.log(30, 'Unable to contact tracker {0}: UDP sendto() failed with \'{1}\'. Faking timeout.'.format(self.address_get(),exc))
+         self._timeout_fake()
          return
       self.timeout_timer = event_dispatcher.set_timer(self.TIMEOUT, self.timeout_handle)
     
    def close(self):
       """Close socket, if opened, and reset state variables"""
+      self ed = None
       if (self.sock):
          self.sock.close()
          self.sock = None
