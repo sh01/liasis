@@ -395,7 +395,7 @@ class UDPTrackerRequest(TrackerRequest):
     
    def close(self):
       """Close socket, if opened, and reset state variables"""
-      self ed = None
+      self.ed = None
       if (self.sock):
          self.sock.close()
          self.sock = None
