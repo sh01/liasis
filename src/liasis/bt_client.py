@@ -567,7 +567,12 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if (self.bt_buffer_output or buffering_force):
          self.bt_buffer_output += data
       else:
-         self.send_bytes((data,), **kwargs)
+         try:
+            self.send_bytes((data,), **kwargs)
+         except socket.error as exc:
+            self.log(20, '%r failed to send data; closing. Error was:', exc_info=True)
+            self.close()
+            return
          self.ts_traffic_last_out = time.time()
          if (bw_count):
             self.bandwidth_manager_out.bandwidth_take(len(data))
@@ -610,8 +615,8 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       """Send handshake to peer"""
       if (not self):
          return
-      self.send_data_bt(self.handshake_str_get())
       self.handshake_sent = True
+      self.send_data_bt(self.handshake_str_get())
       
    # regular BT traffic
    def keepalive_send(self):
