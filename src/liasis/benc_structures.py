@@ -195,8 +195,8 @@ class BTMetaInfo:
       'creator', 'comment')
    hash_helper = sha1
    
-   btmeta_known_fields_global = set(('announce-list', 'announce', 'creation date', 'created by', 'comment', 'info'))
-   btmeta_known_fields_info = set(('piece length', 'pieces', 'length', 'name', 'path', 'md5sum', 'files'))
+   btmeta_known_fields_global = set((b'announce-list', b'announce', b'creation date', b'created by', b'comment', b'info'))
+   btmeta_known_fields_info = set((b'piece length', b'pieces', b'length', b'name', b'path', b'md5sum', b'files'))
 
    hr_line_fmt_str = '{0:20} {1}'
    hr_line_fmt_repr = '{0:20} {1!a}'
