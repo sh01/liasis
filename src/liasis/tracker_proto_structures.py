@@ -184,7 +184,7 @@ class HTTPTrackerRequest(TrackerRequest):
 
 
 # Implementation of protocol described on
-# <http://home.mchsi.com/~bitbuddy/wsb/udp_tracker_protocol.html>
+# <http://xbtt.sourceforge.net/udp_tracker_protocol.html>
 # Unfortunately, this protocol seems to be limited to ipv4.
 # Fortunately, it doesn't appear to be widely used.
 class UDPTrackerRequest(TrackerRequest):
