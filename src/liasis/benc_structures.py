@@ -379,9 +379,10 @@ class BTTargetFile:
          mode = 'w+b'
 
       self.file = open(ap, mode, bufsize)
-      self.file.seek(self.length-1)
-      if (not self.file.peek(0)):
-         self.file.write(b'\x00')
+      if (self.length > 0):
+         self.file.seek(self.length-1)
+         if (not self.file.peek(0)):
+            self.file.write(b'\x00')
       self.file.seek(0)
       fcntl.lockf(self.file.fileno(), lock_op)
    
