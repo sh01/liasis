@@ -2178,7 +2178,7 @@ class BTClient:
       
       for bth in self.torrents.values():
          if not (bth.init_started):
-            bth.io_start(sa, self.data_basepath, self.port,
+            bth.io_start(sa, self.data_basepath, self.server.sock.getsockname()[1],
                self._btdiskio_build)
    
    def bths_reannounce_tracker(self):
@@ -2229,9 +2229,9 @@ class BTClient:
       """Instantiate BTorrentHandler and register and return created BTH"""
       if (metainfo.info_hash) in self.torrents:
          raise DupeError("I'm already tracking torrent {0} with same info_hash {1!a} as in specified metainfo.".format(self, metainfo.info_hash))
-      bth = BTorrentHandler(metainfo=metainfo, port=self.port, active=active, *bth_args, **bth_kwargs)
+      bth = BTorrentHandler(metainfo=metainfo, active=active, *bth_args, **bth_kwargs)
       if not (self.event_dispatcher is None):
-         bth.io_start(self.sa, self.data_basepath, self.port,
+         bth.io_start(self.sa, self.data_basepath, self.server.sock.getsockname()[1],
             self._btdiskio_build)
       
       self.torrents[metainfo.info_hash] = bth
