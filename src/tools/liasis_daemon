@@ -29,6 +29,7 @@ from gonium.daemon import daemon_fork
 from gonium.fdm import ED_get
 from gonium.posix.signal import SignalCatcher, SA_RESTART
 from gonium.service_aggregation import ServiceAggregate
+from gonium.fdm.stream import AsyncLineStream
 
 from liasis.benc_structures import BTMetaInfo
 from liasis import bt_client
@@ -128,7 +129,15 @@ def main():
          log(50, 'Test-session finished; shutting down.')
          sa.ed.shutdown()
       
+      def cb2(*args, **kwargs):
+         log(50, 'Lost stdin; shutting down.')
+         sa.ed.shutdown()
+      
       btc.em_bth_download_finish.new_listener(cb)
+      
+      stdin_s = AsyncLineStream(sa.ed, sys.stdin.detach())
+      sys.stdin = None
+      stdin_s.process_close = cb2
    
    sa.sc.sighandler_install(signal.SIGTERM, SA_RESTART)
    sa.sc.sighandler_install(signal.SIGINT, SA_RESTART)
