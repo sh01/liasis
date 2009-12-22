@@ -77,8 +77,8 @@ class Tester:
    intermediate_ddname = b'test_data_set'
    http_prefix = b'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n'
    
-   piece_length = 1361
-   dfile_lens = (piece_length-5,0,0,0,1,piece_length*50,4,piece_length*50,0,0,132)
+   piece_length = 66853
+   dfile_lens = (piece_length-5,0,0,0,1,piece_length*5,4,piece_length*5,0,0,piece_length*256)
    
    config_argsets = (
       (0, b'data_1', 'liasis_test.ctl.1'),
@@ -96,6 +96,7 @@ class Tester:
       self.daemon_binpath = daemon_binpath
       self._standalone = False
       self._shutting_down = False
+      self._dcmps = None
    
    def run_tests(self):
       self._daemons_start()
@@ -103,9 +104,30 @@ class Tester:
       self._data_prepare()
       self._daemons_prime()
    
+   def verify_data(self):
+      from filecmp import cmpfiles
+      self.log(20, 'Verifying transferred files ...')
+      reflist = list(str(x).encode('ascii') for x in range(len(self.dfile_lens)))
+      reflist.sort()
+      
+      i = 1
+      for dcmp in self._dcmps:
+         f = dcmp.same_files
+         f.sort()
+         if (f != reflist):
+            raise Exception('File metadata verification failed: {0!a} {1!a}. Dir: {2}'.format(f, reflist, i))
+         eq_fns = cmpfiles(dcmp.left, dcmp.right, f, False)[0]
+         if (eq_fns != reflist):
+            raise Exception('File content verification failed: {0!a} {1!a}. Dir: {2}'.format(eq_fns, reflist, i))
+         i += 1
+         
+      self.log(20, 'Data integrity check passed.')
+   
    def shutdown(self):
       if (self._shutting_down):
          return
+      from filecmp import dircmp
+      
       self.log(20, '{0!a} shutting down.'.format(self))
       self._shutting_down = True
       for ap in self.aps:
@@ -120,6 +142,15 @@ class Tester:
       for cc in self.ccs:
          cc.close()
       
+      bdirn = os.path.join(self.config_argsets[0][1], self.intermediate_ddname)
+      dcmps = deque()
+      
+      for cas in self.config_argsets[1:]:
+         dn = os.path.join(cas[1], self.intermediate_ddname)
+         dcmps.append(dircmp(bdirn, dn))
+      
+      self._dcmps = dcmps
+      
       if (self._standalone):
          self.ed.shutdown()
    
@@ -131,6 +162,7 @@ class Tester:
       self.run_tests()
       self._standalone = True
       ed.event_loop()
+      self.verify_data()
    
    def _cc_process_COMMANDFAIL(self, cmd, args):
       self.log(40, 'Got COMMANDFAIL on cc: {1!a}'.format(cmd,args))
