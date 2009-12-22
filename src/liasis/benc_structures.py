@@ -214,6 +214,10 @@ class BTMetaInfo:
    def str_hash(cls, string):
       return cls.hash_helper(string).digest()
    
+   def build_benc_string(self):
+      """Serialize object using bencoding."""
+      return benc_str_from_py(self.state_get())
+   
    def state_get(self):
       """Summarize internal state using nested dicts, lists, ints and strings"""
       return self.dict_init

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Copyright 2007,2008 Sebastian Hagen
+#Copyright 2007,2008,2009 Sebastian Hagen
 # This file is part of liasis.
 #
 # liasis is free software; you can redistribute it and/or modify
@@ -399,7 +399,17 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self = cls.build_sock_connect(ed, address, *args, **kwargs)
       self.btpeer = BTPeer(address[0], address[1], None)
       return self
-      
+   
+   def _process_new_pieces(self):
+      if (self.piecemask.bits_set_count() <= self.piece_max):
+         return
+      if (not self.bth):
+         return
+      if (not self.bth.download_complete):
+         return
+      self.log(15, 'Closing connection to peer {0!a}, since both it and we are finished with downloading.'.format(self.btpeer))
+      self.close()
+   
    def init_finish(self, bth):
       """Finish variable initialization by copying data from BTorrentHandler instance"""
       self.bth = bth
@@ -411,6 +421,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.bandwidth_logger_in = bth.bandwidth_logger_in
       self.bandwidth_manager_out = bth.bandwidth_manager_out
       self.instance_init_done = True
+      self._process_new_pieces()
 
    def state_get(self):
       """Summarize internal state using nested dicts, lists, ints and strings"""
@@ -1155,6 +1166,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if not (self.s_interest):
          # This may have made the peer more interesting to us
          self.maintenance_perform()
+      self._process_new_pieces()
    
    def input_process_bitfield(self, data_sio, payload_len):
       """Process BITFIELD message"""
@@ -1167,6 +1179,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.log(15, 'Updating bitfield on {0!a} after BITFIELD message.'.format(self))
       self.piecemask = BitMask(data_sio.read(payload_len), bitlen=self.piecemask.bitlen)
       self.bth.pieces_availability_adjust_mask(self.piecemask, +1)
+      self._process_new_pieces()
    
    def input_process_request(self, data_sio, payload_len):
       """Process REQUEST message"""
@@ -1258,6 +1271,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       if (payload_len != 0):
          raise BTProtocolError('Value {0} for payload_len invalid; expected 0.'.format(payload_len))
       self.piecemask = BitMask.build_full(len(self.bth.metainfo.piece_hashes))
+      self._process_new_pieces()
       
    def input_process_have_none(self, data_sio, payload_len):
       """Process (Fast Extensions) HAVE NONE message"""
@@ -1474,7 +1488,8 @@ class BTorrentHandler:
       self.bmo_cls = bmo_cls
       self.bandwidth_logger_in = self.bandwidth_logger_out = \
          self.bandwidth_manager_out = None
-
+      
+      self.em_download_finish = EventMultiplexer(self)
       
    def data_transfers_start(self):
       """Start transferring data"""
@@ -1805,8 +1820,10 @@ class BTorrentHandler:
          self.log(28, 'Completed torrent {0}; {1} bytes in {2} pieces.'.format(self, self.metainfo.length_total, self.piecemask.bitlen))
          self.download_complete = True
          self.ts_downloading_finish = datetime.datetime.now()
+         self.em_download_finish()
          for conn in self.peer_connections.copy():
             conn.downloading = False
+            conn._process_new_pieces()
 
 
    def block_request_process(self, conn):
@@ -2136,6 +2153,7 @@ class BTClient:
       self.bandwidth_logger_in = None
       self.em_bth_add = EventMultiplexer(self)
       self.em_bth_remove = EventMultiplexer(self)
+      self.em_bth_download_finish = EventMultiplexer(self)
       self.bt_stats_tracker = BTStatsTracker()
       self.basepath = None
       
@@ -2155,6 +2173,11 @@ class BTClient:
    def state_get(self):
       """Summarize internal state using nested dicts, lists, ints and strings"""
       return BTClientMirror.state_get_from_original(self)
+   
+   def _bth_link_em_df(self, bth):
+      def cb():
+         self.em_bth_download_finish(bth)
+      return bth.em_download_finish.new_listener(cb)
    
    def connections_start(self, sa, btc_config):
       """Open server socket and call io_start() on all inactive BTHs"""
@@ -2178,6 +2201,7 @@ class BTClient:
       
       for bth in self.torrents.values():
          if not (bth.init_started):
+            self._bth_link_em_df(bth)
             bth.io_start(sa, self.data_basepath, self.server.sock.getsockname()[1],
                self._btdiskio_build)
    
@@ -2237,6 +2261,7 @@ class BTClient:
       self.torrents[metainfo.info_hash] = bth
       self.torrent_infohashes_update()
       self.em_bth_add(self, metainfo.info_hash)
+      self._bth_link_em_df(bth)
       
       return bth
 
