@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import errno
 import logging
 import os
 from collections import deque, Callable
@@ -89,7 +90,7 @@ class BTDiskBase:
          subrange access on BTDiskIO"""
       f_i = 0
       rv = deque()
-      while (f_i < len(self.files)):
+      while (length and (f_i < len(self.files))):
          btfile = self.files[f_i]
          flen = btfile.length
          if (offset > 0):
@@ -100,13 +101,15 @@ class BTDiskBase:
             flen -= offset
          
          len_rw = min(length, flen)
-         rv.append((btfile.file, offset, len_rw))
+         if (flen > 0):
+            rv.append((btfile.file, offset, len_rw))
          offset = 0
          length -= len_rw
          if (length == 0):
             break
          f_i += 1
-      else:
+      
+      if (length):
          raise BTFileError('Access violates file domain.')
       return rv
 
@@ -210,11 +213,75 @@ class BTDiskAIO(BTDiskBase):
       return req
 
 
+class BTDiskBlockFDIORequest(BTDiskIORequest):
+   _trans_errors = set((0, errno.EAGAIN, errno.EINTR, errno.EWOULDBLOCK))
+   def _process_result(self, req):
+      """Process IO read/write response"""
+      if not (req.get_missing_byte_count()):
+         # DTR finished.
+         super()._process_result(req)
+         return
+      
+      if (req.errno in self._trans_errors):
+         # Transfer failed to finish for a transient reason. Just requeue
+         # it, then.
+         req.queue()
+         return
+      
+      self.failed = True
+      try:
+         req.get_errors()
+      except Exception as exc:
+         _log(30, 'BTDiskBlockFDIORequest {0!a} failed:'.format(self), exc_info=True)
+      else:
+         raise Exception("Can't happen.")
+      self.callback(self)
+
+
+class BTDiskBlockFDIO(BTDiskBase):
+   """File like object for accessing the set of files targeted by one torrent,
+      using gonium.posix.blockfd."""
+   MODE_READ = 0
+   MODE_WRITE = 1
+   def async_write(self, req_s:(int,memoryview), callback:Callable) -> BTDiskIORequest:
+      """Write data at offset."""
+      return self._async_io(self.MODE_WRITE, req_s, callback)
+   
+   def async_readinto(self, req_s:(int,memoryview), callback:Callable) -> BTDiskIORequest:
+      """Read data from offset."""
+      return self._async_io(self.MODE_READ, req_s, callback)
+
+   def _async_io(self, mode, req_s, callback):
+      req = BTDiskBlockFDIORequest(None, callback)
+      dtrs = deque()
+      for (offset, buf) in req_s:
+         i = 0
+         buf = memoryview(buf)
+         for (f, f_off, length) in self._fileset_get(offset, len(buf)):
+            if (mode == self.MODE_READ):
+               dtr = self._sa.dtd.new_req_fd2mem(f, buf[i:i+length],
+                  req._process_result, src_off=f_off)
+            else:
+               dtr = self._sa.dtd.new_req_mem2fd(buf[i:i+length], f,
+                  req._process_result, dst_off=f_off)
+            
+            dtrs.append(dtr)
+            i += length
+      
+      req.res_count = len(dtrs)
+      for dtr in dtrs:
+         dtr.queue()
+      
+      return req
+
+
 def btdiskio_build(sa, *args, **kwargs):
-   if (sa.aio):
+   if not (sa.dtd is None):
+      return BTDiskBlockFDIO(sa, *args, **kwargs)
+   if not (sa.aio is None):
       return BTDiskAIO(sa, *args, **kwargs)
-   else:
-      return BTDiskSyncIO(sa, *args, **kwargs)
+   
+   return BTDiskSyncIO(sa, *args, **kwargs)
 
 
 def _selftest():
