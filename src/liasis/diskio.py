@@ -177,6 +177,7 @@ class BTDiskAIORequest(BTDiskIORequest):
          _log(40, 'AIO Request {0} failed with rc {1} (length {2}).'.format(
             req, req.rc, req.length))
          self.failed = True
+      super()._process_result(req)
 
 
 class BTDiskAIO(BTDiskBase):
@@ -192,7 +193,7 @@ class BTDiskAIO(BTDiskBase):
 
    def _async_io(self, mode, req_s, callback):
       aio = self._sa.aio
-      req = BTDiskIORequest(None, callback)
+      req = BTDiskAIORequest(None, callback)
       aio_reqs = deque()
       for (offset, buf) in req_s:
          i = 0
