@@ -120,6 +120,7 @@ def main():
    pickler = FileNamePickler(daemon_config.pickle_filename)
    
    sa = ServiceAggregate()
+   sa.add_aio()
    
    btc.connections_start(sa, btc_config)
    btc.pickling_shedule(pickler)
