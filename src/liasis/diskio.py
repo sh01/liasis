@@ -217,7 +217,7 @@ class BTDiskBlockFDIORequest(BTDiskIORequest):
    _trans_errors = set((0, errno.EAGAIN, errno.EINTR, errno.EWOULDBLOCK))
    def _process_result(self, req):
       """Process IO read/write response"""
-      if not (req.get_missing_byte_count()):
+      if (req.get_missing_byte_count() == 0):
          # DTR finished.
          super()._process_result(req)
          return
@@ -235,7 +235,8 @@ class BTDiskBlockFDIORequest(BTDiskIORequest):
          _log(30, 'BTDiskBlockFDIORequest {0!a} failed:'.format(self), exc_info=True)
       else:
          raise Exception("Can't happen.")
-      self.callback(self)
+      
+      super()._process_result(req)
 
 
 class BTDiskBlockFDIO(BTDiskBase):
