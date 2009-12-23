@@ -244,7 +244,6 @@ class BTClientMirror(BaseMirror):
 
    def dictval_state_var_s_state_get(v):
       rv = {}
-      print(v)
       for key in v:
          rv[key] = v[key].state_get()
       return rv
