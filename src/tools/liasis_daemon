@@ -119,6 +119,9 @@ def main():
    
    pickler = FileNamePickler(daemon_config.pickle_filename)
    
+   if (options.daemon):
+      daemon_fork()
+   
    sa = ServiceAggregate()
    sa.add_dtd()
    
@@ -163,9 +166,6 @@ def main():
       btm_config.peer_id_generator,
       address_family=btm_config.control_socket_af,
       address=btm_config.control_socket_address, bt_clients=(btc,))
-   
-   if (options.daemon):
-      daemon_fork()
    
    if (options.profile):
       import cProfile
