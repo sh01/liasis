@@ -117,6 +117,9 @@ class BTDiskBase:
       """Close backing files"""
       for file in self.files:
          file.file_close()
+      self.metainfo = None
+      self.metainfo.files = None
+      self.files = None
 
 
 class BTDiskSyncIO(BTDiskBase):
@@ -274,7 +277,12 @@ class BTDiskBlockFDIO(BTDiskBase):
          dtr.queue()
       
       return req
-
+   
+   def close(self):
+      """Close backing files"""
+      self.metainfo.files = None
+      self.metainfo = None
+      self.files = None
 
 def btdiskio_build(sa, *args, **kwargs):
    if not (sa.dtd is None):
