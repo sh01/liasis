@@ -1374,7 +1374,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       MSG_ID_HAVE_ALL:input_process_have_all,
       MSG_ID_HAVE_NONE:input_process_have_none,
       MSG_ID_REJECT_REQUEST:input_process_reject_request,
-      MSG_ID_ALLOWED_FAST:input_process_allowed_fast
+      MSG_ID_ALLOWED_FAST:input_process_allowed_fast,
       MSG_ID_EXTENDED:input_process_extended
    }
 
