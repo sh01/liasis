@@ -291,6 +291,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
    MSG_ID_HAVE_NONE = 15
    MSG_ID_REJECT_REQUEST = 16
    MSG_ID_ALLOWED_FAST = 17
+   MSG_ID_EXTENDED = 20
    
    # Limit the ability of hostile peers to DOS us with ridiculous buffer
    # sizes.
@@ -1317,6 +1318,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       self.log2(12, '{0} processing valid ALLOWED FAST message for piece {1}.'.format(self, piece_index))
       self.pieces_allowed_fast.add(piece_index)
    
+   def input_process_extended(self, data_sio, payload_len):
+      """Process (Extension Protocol) EXTENDED message"""
+      # XXX: Add support for this. This function only exists becasue some
+      # clients will send EXTENDED without checking whether the peer supports
+      # it.
+      pass
+   
    # standard python operator overloading
    def __repr__(self):
       return '<{0} to {1} at {2} sent: {3} received: {4}>'.format(
@@ -1367,6 +1375,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
       MSG_ID_HAVE_NONE:input_process_have_none,
       MSG_ID_REJECT_REQUEST:input_process_reject_request,
       MSG_ID_ALLOWED_FAST:input_process_allowed_fast
+      MSG_ID_EXTENDED:input_process_extended
    }
 
 
