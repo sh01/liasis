@@ -36,7 +36,7 @@ you really need it, you should be able to figure it out.
 import struct
 import fcntl
 
-from .diskio import BTDiskSyncIO, BTDiskAIO
+from .diskio import BTDiskSyncIO, BTDiskAIO, BTDiskBlockFDIO
 
 class LNFSError(Exception):
    pass
@@ -91,30 +91,24 @@ class LNFSVolume:
          tlen = metainfo.length_total
          if (tlen > (self.f_len - self.free_offset)):
             raise LNFSError('{0} has insufficient memory to store {1} more bytes'.format(self, tlen))
-         aio = sa.aio
          bhd = struct.pack(self.BLOCK_HEADER_FMT, 1, tlen, metainfo.info_hash)
          bhd_next = struct.pack(self.BLOCK_HEADER_FMT, 0, 0, b'\x00'*20)
-         if not (aio is None):
-            aio.io(
-               (
-                  aio.REQ_CLS(aio.MODE_WRITE, bhd_next, self.f, self.free_offset + tlen + self.BLOCK_HEADER_LEN, callback=lambda *args: None),
-                  aio.REQ_CLS(aio.MODE_WRITE, bhd, self.f, self.free_offset, callback=lambda *args: None)
-               )
-            )
-         else:
-            self.f.seek(self.free_offset + tlen + self.BLOCK_HEADER_LEN)
-            self.f.write(bhd_next)
-            self.f.seek(self.free_offset)
-            self.f.write(bhd)
+         
+         self.f.seek(self.free_offset + tlen + self.BLOCK_HEADER_LEN)
+         self.f.write(bhd_next)
+         self.f.seek(self.free_offset)
+         self.f.write(bhd)
          
          di_args = (sa, self, self.free_offset+self.BLOCK_HEADER_LEN, tlen)
          self.torrents[metainfo.info_hash] = (self.free_offset, tlen)
          self.free_offset += tlen + self.BLOCK_HEADER_LEN
       
-      if (sa.aio is None):
-         return LNFSDiskSyncIO(*di_args)
-      else:
+      if not (sa.dtd is None):
+         return LNFSBlockFDIO(*di_args)
+      elif not (sa.aio is None):
          return LNFSDiskAIO(*di_args)
+      else:
+         return LNFSDiskSyncIO(*di_args)
    
    def __repr__(self):
       return '<LNFSVolume at {0} fl {1} torrents {2} size {3} used {4}>'.format(
@@ -149,6 +143,9 @@ class LNFSDiskSyncIO(LNFSDiskIOBase, BTDiskSyncIO):
    pass
 
 class LNFSDiskAIO(LNFSDiskIOBase, BTDiskAIO):
+   pass
+
+class LNFSBlockFDIO(LNFSDiskIOBase, BTDiskBlockFDIO):
    pass
 
 
