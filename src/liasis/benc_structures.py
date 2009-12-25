@@ -23,6 +23,8 @@
 import struct
 import random
 import datetime
+import io
+import os
 import os.path
 import fcntl
 import binascii
@@ -357,8 +359,10 @@ class BTTargetFile:
    def get_openness(self):
       return not (self.file is None)
    
-   def file_open(self, basedir, bufsize=4096, mkdirs=True, mkfiles=True,
+   def file_open(self, basedir, mkdirs=True, mkfiles=True,
          lock_op=fcntl.LOCK_EX | fcntl.LOCK_NB):
+      from os import O_RDWR, O_SYNC, O_CREAT
+      
       assert (self.file is None)
       path = os.path.normpath(os.path.join(basedir, self.path))
       ap = os.path.abspath(path)
@@ -366,22 +370,19 @@ class BTTargetFile:
          raise BTClientError("Filepath {0!a} of {1} isn't safe to open.".format(path, self))
       
       pathdir = os.path.dirname(ap)
-      if (not os.path.exists(pathdir)):
+      if ((mkdirs) and (not os.path.exists(pathdir))):
          os.makedirs(pathdir)
-      if ((not mkfiles) or (os.path.exists(path))):
-         # Note that there is a fundamental race condition here: if this file
-         # is created by an external event before we do it, we'll truncate it.
-         # OTOH, if there is any other process modifying the file in parallel
-         # to us, the result likely won't be good even if things don't go wrong
-         # on opening it.
-         mode = 'r+b'
-      else:
-         mode = 'w+b'
-
-      self.file = open(ap, mode, bufsize)
+      
+      flags = O_RDWR | O_SYNC
+      if (mkfiles):
+         flags |= O_CREAT
+      
+      fd = os.open(ap, flags, 0o666)
+      self.file = io.FileIO(fd, 'w+b')
+      
       if (self.length > 0):
          self.file.seek(self.length-1)
-         if (not self.file.peek(0)):
+         if (self.file.read(1) == b''):
             self.file.write(b'\x00')
       self.file.seek(0)
       fcntl.lockf(self.file.fileno(), lock_op)
