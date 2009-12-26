@@ -70,6 +70,7 @@ def _main():
    
    op = optparse.OptionParser(usage='%prog [options] <lnfs_volume> <torrent meta file>...')
    op.add_option('-b', '--basepath', dest='basepath', default='.', metavar='PATH', help='Basepath to use for reading BT data')
+   op.add_option('-r', '--reverse', default=False, action='store_true', help='Copy from LNFS to FS instead of the opposite direction')
    
    (options, args) = op.parse_args()
    basepath = options.basepath.encode()
@@ -86,11 +87,14 @@ def _main():
    for fn_bt in fns_bt:
       _log(20, 'Reading metainfo from {0!a} and opening data files.'.format(fn_bt))
       mi = BTMetaInfo.build_from_benc_stream(open(fn_bt,'rb'))
-      btdiskio_v = btdiskio_v_build(sa, mi, basepath, mkdirs=False, mkfiles=False)
+      btdiskio_v = btdiskio_v_build(sa, mi, basepath, mkdirs=options.reverse, mkfiles=options.reverse)
       btdiskio_lnfs = vol.btdiskio_build(sa, mi, basepath)
       
       _log(20, 'Copying data.')
-      btdata_copy_b(sa, btdiskio_lnfs, btdiskio_v, mi.length_total)
+      if (options.reverse):
+         btdata_copy_b(sa, btdiskio_v, btdiskio_lnfs, mi.length_total)
+      else:
+         btdata_copy_b(sa, btdiskio_lnfs, btdiskio_v, mi.length_total)
       _log(20, 'Data copy finished.')
    
    _log(20, 'All done.')
