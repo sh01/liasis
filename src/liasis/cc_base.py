@@ -88,7 +88,7 @@ class BTControlConnectionBase:
          
          header_str = in_data_sio.read(8)
          (data_len, seq_num) = struct.unpack('>II', header_str)
-         if ((in_data_len - index) < data_len):
+         if ((in_data_len - index - 8) < data_len):
             # Message incomplete
             in_data_sio.seek(-8,1)
             break
