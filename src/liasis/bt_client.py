@@ -524,7 +524,13 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          self.log2(30, '{0} force-reading blocks ({1} pending blocks).'.format(
             self, len(bpo)))
       
-      if (sum(len(b) for b in self._outbuf) > 16384):
+      tbl = 0
+      for bufel in self._outbuf:
+         if (bufel is None):
+            continue
+         tbl += len(bufel)
+      
+      if (tbl >= 34406):
          return
       
       total_len = sum(e[2]+13 for e in bpo)
