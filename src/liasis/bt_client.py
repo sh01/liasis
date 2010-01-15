@@ -435,10 +435,10 @@ class BTClientConnection(AsyncDataStream, MSEBase):
          return
       if (now > (self.ts_traffic_last_in + self.connection_timeout)):
          if (self.sync_done):
-            self.log(20, 'Soft timeout on {0}. Disconnecting.'.format(self))
+            self.log(17, 'Soft timeout on {0}. Disconnecting.'.format(self))
             self.close() # not fatal, so remember peer for the moment
          else:
-            self.log2(22, "Hard timeout (didn't finish sync) on {0}. Disconnecting.".format(self))
+            self.log2(17, "Hard timeout (didn't finish sync) on {0}. Disconnecting.".format(self))
             self.client_error_process()
          return
       if (((now - self.ts_traffic_last_out) > 15) and self.handshake_sent):
@@ -1822,7 +1822,7 @@ class BTorrentHandler:
             self.blockmask.block_have_set(piece_index, block_index, False)
          return
       
-      self.log(14, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
+      self.log(20, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
       self.piecemask.bit_set(piece_index, True)
       piece_length = self.piece_length_get(piece_index == (self.piece_count - 1))
       self.pieces_have_count += 1
@@ -1895,7 +1895,7 @@ class BTorrentHandler:
       
       for conn in self.downloaders:
          if not (conn in downloaders):
-            self.log(20, 'Calling uploading_stop() on {0}.'.format(conn))
+            self.log(10, 'Calling uploading_stop() on {0}.'.format(conn))
             conn.uploading_stop(not (conn in senders))
       
       for conn in downloaders:
@@ -2115,7 +2115,7 @@ class BTorrentHandler:
       
    def connection_remove(self, conn):
       """Forget about a tracked connection"""
-      self.log(20, 'Removing conn {0}.'.format(conn))
+      self.log(15, 'Removing conn {0}.'.format(conn))
       self.peer_connections.remove(conn)
       self.content_bytes_in += conn.content_bytes_in
       self.content_bytes_out += conn.content_bytes_out
