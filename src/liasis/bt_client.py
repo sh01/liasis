@@ -1774,7 +1774,7 @@ class BTorrentHandler:
             raise BTClientError("I already have piece {0}, block {1} for connection {2}, and am not in endgame mode.".format(piece_index, block_index, self))
       
       if (self.blockmask_writing.block_have_get(piece_index, block_index)):
-         self.log(30, '{0} discarding received block p{0} b{1}; dupe while waiting for AIO write to finish.'.format(piece_index, block_index))
+         self.log(30, '{0} discarding received block p{1} b{2}; dupe while waiting for AIO write to finish.'.format(self, piece_index, block_index))
          return False
       
       req = self.bt_disk_io.async_write(((piece_index*self.piece_length_get() + start,
