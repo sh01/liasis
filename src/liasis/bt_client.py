@@ -1820,6 +1820,16 @@ class BTorrentHandler:
          
          for block_index in subrange:
             self.blockmask.block_have_set(piece_index, block_index, False)
+            
+         if (self.piecemask.bit_get(piece_index)):
+            self.piecemask.bit_set(piece_index, False)
+            self.pieces_have_count -= 1
+            self.log(40, 'Inval-Dupe: Apparently botched piece {0} of torrent {1}, but we had it already. Marking as undownloaded.'.format(piece_index, self))
+         
+         return
+      
+      if (self.piecemask.bit_get(piece_index)):
+         self.log(40, 'Dupe: Apparently finished {0} of torrent {1}, but we had it already. Ignoring.'.format(piece_index, self))
          return
       
       self.log(20, 'Finished piece {0} of torrent {1}. Hash {2!a} confirmed.'.format(piece_index, self, mi_piece_hash))
