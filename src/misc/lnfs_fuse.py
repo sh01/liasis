@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #Copyright 2010 Sebastian Hagen
 # This file is part of liasis.
 #
@@ -17,9 +17,6 @@
 
 # LNFS is not a filesystem. But for some purposes, it might be worth weakly
 # pretending that is.
-# Contrary to the rest of liasis, this is python 2.x code. This is mostly a
-# result of the author not having a convenient way to install python3.1 fuse
-# bindings.
 
 import os
 from os.path import abspath
