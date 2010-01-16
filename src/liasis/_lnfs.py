@@ -77,6 +77,11 @@ class LNFSVolume:
       
       self.free_offset = offset
    
+   def get_block_data_indices(self, infohash):
+      """Return (offset, length) tuple for data section of specified infohash."""
+      (offset, blocklen) = self.torrents[infohash]
+      return (offset + self.BLOCK_HEADER_LEN, blocklen)
+   
    def btdiskio_build(self, sa, metainfo, basepath, mkdirs=True, mkfiles=True,
          *args, **kwargs):
       if (metainfo.info_hash in self.torrents):
