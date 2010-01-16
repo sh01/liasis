@@ -58,7 +58,9 @@ class LNFSFuse(fuse.Operations):
       'st_gid':0,
       'st_uid':0,
       'st_mode':0,
-      'st_size':0
+      'st_size':0,
+      'st_blocks':0,
+      'st_blksize':1048576
    }
    
    def __init__(self, *args, **kwargs):
@@ -131,6 +133,7 @@ class LNFSFuse(fuse.Operations):
                rv['nlink'] += 1
       else:
          rv['st_size'] = f.length
+         rv['st_blocks'] = (f.length + 511) // 512
          rv['st_mode'] |= stat.S_IFREG | 0o444
          rv['st_nlink'] = 1
       
