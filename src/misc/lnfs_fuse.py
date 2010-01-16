@@ -213,7 +213,7 @@ def main():
    if (opts.allow_other):
       fuse_kwargs['allow_other'] = True
    
-   fuse.FUSE(lf, mountpoint, **fuse_kwargs)
+   fuse.FUSE(lf, mountpoint, nothreads=True, **fuse_kwargs)
 
 
 if (__name__ == '__main__'):
