@@ -561,7 +561,7 @@ class BTClientConnection(AsyncDataStream, MSEBase):
 
    def _output_write(self, *args, **kwargs):
       AsyncDataStream._output_write(self, *args, **kwargs)
-      if ((not self._outbuf) and self.uploading):
+      if ((not self._outbuf) and (not (self._outbuf is None)) and self.uploading):
          self.read_blocks()
 
    def _send_block(self, io_req):
