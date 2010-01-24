@@ -2021,10 +2021,11 @@ class BTorrentHandler:
       an_urls_tier = self.metainfo.announce_urls[self.tier]
       an_url = an_urls_tier[self.tier_index]
       # announce target reordering
-      self.log(10, 'TrackerRequest {0} from {1!a} got response; reordering announce urls.'.format(tr,an_url))
-      an_urls_tier.remove(an_url)
-      an_urls_tier.insert(0, an_url)
-      self.tier_index = 0
+      self.log(20, 'TrackerRequest from {0} to {2!a} got response.'.format(self, tr, an_url))
+      if (self.tier_index != 0):
+         an_urls_tier.remove(an_url)
+         an_urls_tier.insert(0, an_url)
+         self.tier_index = 0
       self.tracker_valid = True
       
       self.log(10, 'Processing response {0!a}.'.format(data))
@@ -2059,27 +2060,28 @@ class BTorrentHandler:
       """Process an error occuring during announce procedure"""
       self.tr = None
       self.timer_announce = None
+      self.log(25, 'TrackerRequest from {0} to {1!a} failed.'.format(self, self.announce_url_get()))
+      
       if (self.tracker_valid):
          # Tracker used to be reachable, but not anymore.
          # Start at beginning of tier-structure.
          self.tracker_valid = False
          self.tier = 0
          self.tier_index = 0
-
-      an_urls = self.metainfo.announce_urls
-      if (len(an_urls[self.tier]) > (self.tier_index + 1)):
-         # Should we discard the trackerid here as well?
-         # The specs aren't particularly clear about this.
-         self.tier_index += 1
-      elif (len(an_urls) > (self.tier + 1)):
-         self.trackerid = None
-         self.tier += 1
-         self.tier_index = 0
       else:
-         self.tier = 0
-         self.tier_index = 0
+         an_urls = self.metainfo.announce_urls
+         if (len(an_urls[self.tier]) > (self.tier_index + 1)):
+            # Should we discard the trackerid here as well?
+            # The specs aren't particularly clear about this.
+            self.tier_index += 1
+         elif (len(an_urls) > (self.tier + 1)):
+            self.trackerid = None
+            self.tier += 1
+            self.tier_index = 0
+         else:
+            self.tier = 0
+            self.tier_index = 0
       
-      self.log(25, 'TrackerRequest {0} failed.'.format(tr))
       if (self.active):
          self.timer_announce_set(self.announce_retry_interval)
       
